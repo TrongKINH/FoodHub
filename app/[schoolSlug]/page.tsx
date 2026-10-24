@@ -1,5 +1,3 @@
-import { getCurrentUserRole } from "@/app/lib/auth";
-import { AuthButtonClient } from "@/app/AuthButtonClient";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
@@ -15,11 +13,14 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { createServerSupabaseClient } from "@/app/lib/supabase/server";
+import { getCurrentUserRole } from "@/app/lib/auth";
+import { AuthButtonClient } from "@/app/AuthButtonClient";
 import {
   CompactDishGrid,
   SmartTicketSwapBoard,
   CopyWeeklyPicksButton,
   ForumSectionClient,
+  type EnrichedProfileMap,
 } from "./InteractiveClient";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +48,7 @@ export default async function SchoolHomePage({
   if (!school) {
     notFound();
   }
+
   const auth = await getCurrentUserRole(school);
 
   let dishQuery = supabase
@@ -68,6 +70,8 @@ export default async function SchoolHomePage({
     { data: swaps },
     { data: forumPosts },
     { data: forumComments },
+    { data: userProfiles },
+    { data: roleAssignments },
   ] = await Promise.all([
     dishQuery,
     supabase
@@ -99,13 +103,40 @@ export default async function SchoolHomePage({
       .eq("school_id", school.id)
       .eq("status", "published")
       .order("created_at", { ascending: false })
-      .limit(15),
+      .limit(20),
     supabase
       .from("forum_comments")
       .select("*")
       .eq("status", "published")
       .order("created_at", { ascending: true }),
+    supabase.from("user_profiles").select("*"),
+    supabase.from("user_role_assignments").select("*, custom_roles(*)"),
   ]);
+
+  // Xây dựng bản đồ ánh xạ Email -> { Username, Avatar, Danh sách Role màu }
+  const profileMap: EnrichedProfileMap = {};
+  (userProfiles ?? []).forEach((p: any) => {
+    const em = p.email?.toLowerCase().trim();
+    if (em) {
+      profileMap[em] = {
+        display_name: p.display_name,
+        avatar_url: p.avatar_url,
+        roles: [],
+      };
+    }
+  });
+
+  (roleAssignments ?? []).forEach((ra: any) => {
+    const em = ra.user_email?.toLowerCase().trim();
+    if (!em || !ra.custom_roles) return;
+    if (!profileMap[em]) {
+      profileMap[em] = { roles: [] };
+    }
+    profileMap[em].roles = [
+      ...(profileMap[em].roles || []),
+      ra.custom_roles,
+    ];
+  });
 
   const reviewsByDish: Record<string, any[]> = {};
   (allReviews ?? []).forEach((r: any) => {
@@ -119,15 +150,33 @@ export default async function SchoolHomePage({
     commentsByPost[c.post_id].push(c);
   });
 
+  const currentUserInfo = {
+    email: auth.email,
+    displayName: auth.displayName,
+    avatarUrl: auth.avatarUrl,
+    roleBadge: auth.roleBadge,
+    isGod: auth.isGod,
+    canManageSchool: auth.canManageSchool,
+    customRoles: auth.customRoles || [],
+  };
+
   // ==========================================================================
-  // SERVER ACTIONS
+  // SERVER ACTIONS: CHẤM SAO (TỰ ĐỘNG GẮN AVATAR + TÊN + ROLE NẾU ĐÃ LOGIN)
   // ==========================================================================
   async function upsertReviewAction(formData: FormData) {
     "use server";
+    const currentAuth = await getCurrentUserRole(school);
     const dish_id = String(formData.get("dish_id") ?? "");
-    const reviewer_key = String(formData.get("reviewer_key") ?? "").trim();
+    const rawKey = String(formData.get("reviewer_key") ?? "").trim();
+    const reviewer_key = currentAuth.email
+      ? `google_${currentAuth.email}`
+      : rawKey;
+
     const reviewer_name =
-      String(formData.get("reviewer_name") ?? "").trim() || "Học sinh";
+      currentAuth.displayName ||
+      String(formData.get("reviewer_name") ?? "").trim() ||
+      "Học sinh";
+
     const rating = Number(formData.get("rating") ?? 5);
     const body = String(formData.get("body") ?? "").trim();
     const tag = String(formData.get("tag") ?? "").trim();
@@ -140,6 +189,9 @@ export default async function SchoolHomePage({
         dish_id,
         reviewer_key,
         reviewer_name,
+        reviewer_email: currentAuth.email,
+        reviewer_avatar: currentAuth.avatarUrl,
+        reviewer_badge: currentAuth.roleBadge,
         rating,
         body: body || null,
         tags: tag ? [tag] : [],
@@ -167,11 +219,16 @@ export default async function SchoolHomePage({
     revalidatePath(`/${school.slug}`);
   }
 
+  // ==========================================================================
+  // SERVER ACTIONS: ĐỔI PHIẾU ĂN
+  // ==========================================================================
   async function createSwapAction(formData: FormData) {
     "use server";
-    const student_name = String(
-      formData.get("student_name") ?? "Học sinh"
-    ).trim();
+    const currentAuth = await getCurrentUserRole(school);
+    const student_name =
+      String(formData.get("student_name") ?? "").trim() ||
+      currentAuth.displayName ||
+      "Học sinh";
     const day_of_week = Number(formData.get("day_of_week") ?? 1);
     const have_slot = Number(formData.get("have_slot") ?? 1);
     const want_slot = Number(formData.get("want_slot") ?? 2);
@@ -259,11 +316,16 @@ export default async function SchoolHomePage({
     revalidatePath(`/${school.slug}`);
   }
 
+  // ==========================================================================
+  // SERVER ACTIONS: FORUM (ĐĂNG BÀI, XÓA BÀI, TRẢ LỜI, XÓA SỔ HOÀNG ĐẾ, EMOJI)
+  // ==========================================================================
   async function createForumPostAction(formData: FormData) {
     "use server";
-    const author_name = String(
-      formData.get("author_name") ?? "Học sinh"
-    ).trim();
+    const currentAuth = await getCurrentUserRole(school);
+    const author_name =
+      currentAuth.displayName ||
+      String(formData.get("author_name") ?? "").trim() ||
+      "Học sinh";
     const title = String(formData.get("title") ?? "").trim();
     const body = String(formData.get("body") ?? "").trim();
     const image_url = String(formData.get("image_url") ?? "").trim();
@@ -274,6 +336,9 @@ export default async function SchoolHomePage({
     await sb.from("forum_posts").insert({
       school_id: school.id,
       author_name,
+      author_email: currentAuth.email,
+      author_avatar: currentAuth.avatarUrl,
+      author_badge: currentAuth.roleBadge,
       title,
       body,
       image_url: image_url || null,
@@ -283,13 +348,43 @@ export default async function SchoolHomePage({
     revalidatePath(`/${school.slug}`);
   }
 
+  async function deleteForumPostAction(formData: FormData) {
+    "use server";
+    const currentAuth = await getCurrentUserRole(school);
+    const post_id = String(formData.get("post_id") ?? "").trim();
+    if (!post_id) return;
+
+    const sb = await createServerSupabaseClient();
+    const { data: post } = await sb
+      .from("forum_posts")
+      .select("author_email")
+      .eq("id", post_id)
+      .single();
+
+    const isOwner = Boolean(
+      currentAuth.email &&
+        post?.author_email &&
+        currentAuth.email === post.author_email.toLowerCase().trim()
+    );
+
+    if (!currentAuth.isGod && !currentAuth.canManageSchool && !isOwner) return;
+
+    await sb.from("forum_comments").delete().eq("post_id", post_id);
+    await sb.from("forum_posts").delete().eq("id", post_id);
+
+    revalidatePath(`/${school.slug}`);
+  }
+
   async function createForumCommentAction(formData: FormData) {
     "use server";
+    const currentAuth = await getCurrentUserRole(school);
     const post_id = String(formData.get("post_id") ?? "");
-    const author_name = String(
-      formData.get("author_name") ?? "Học sinh"
-    ).trim();
+    const author_name =
+      currentAuth.displayName ||
+      String(formData.get("author_name") ?? "").trim() ||
+      "Học sinh";
     const body = String(formData.get("body") ?? "").trim();
+    const reply_to_name = String(formData.get("reply_to_name") ?? "").trim();
 
     if (!post_id || !body) return;
 
@@ -297,6 +392,10 @@ export default async function SchoolHomePage({
     await sb.from("forum_comments").insert({
       post_id,
       author_name,
+      author_email: currentAuth.email,
+      author_avatar: currentAuth.avatarUrl,
+      author_badge: currentAuth.roleBadge,
+      reply_to_name: reply_to_name || null,
       body,
       status: "published",
     });
@@ -304,7 +403,93 @@ export default async function SchoolHomePage({
     revalidatePath(`/${school.slug}`);
   }
 
-  const filterTags = ["#nước", "#tôm", "#bò", "#heo", "#gà", "#hải-sản", "#trứng", "#chay"];
+  // Xóa / Thu hồi tin nhắn Forum: Ghi rõ Hoàng Đế xóa, Admin xóa hay Chính chủ thu hồi
+  async function deleteForumCommentAction(formData: FormData) {
+    "use server";
+    const currentAuth = await getCurrentUserRole(school);
+    const comment_id = String(formData.get("comment_id") ?? "").trim();
+    if (!comment_id) return;
+
+    const sb = await createServerSupabaseClient();
+    const { data: comment } = await sb
+      .from("forum_comments")
+      .select("author_email")
+      .eq("id", comment_id)
+      .single();
+
+    const isOwner = Boolean(
+      currentAuth.email &&
+        comment?.author_email &&
+        currentAuth.email === comment.author_email.toLowerCase().trim()
+    );
+
+    if (!currentAuth.isGod && !currentAuth.canManageSchool && !isOwner) return;
+
+    let deleted_by_role = "self";
+    let replacementText = "Tin nhắn đã được chính chủ thu hồi.";
+
+    if (currentAuth.isGod && !isOwner) {
+      deleted_by_role = "god";
+      replacementText = "(Hoàng Đế đã xóa sổ tin nhắn này)";
+    } else if (currentAuth.canManageSchool && !isOwner) {
+      deleted_by_role = "admin";
+      replacementText = "(Admin nhà trường đã xóa tin nhắn này)";
+    } else if (currentAuth.isGod && isOwner) {
+      // Nếu GOD xóa tin nhắn bất kỳ và muốn hiện oai phong Hoàng Đế
+      deleted_by_role = "god";
+      replacementText = "(Hoàng Đế đã xóa sổ tin nhắn này)";
+    }
+
+    await sb
+      .from("forum_comments")
+      .update({
+        deleted_by_role,
+        body: replacementText,
+      })
+      .eq("id", comment_id);
+
+    revalidatePath(`/${school.slug}`);
+  }
+
+  // Thả Emoji cảm xúc cho Bài đăng hoặc Tin nhắn chat
+  async function reactForumItemAction(formData: FormData) {
+    "use server";
+    const target_type = String(formData.get("target_type") ?? "");
+    const target_id = String(formData.get("target_id") ?? "");
+    const emoji = String(formData.get("emoji") ?? "");
+
+    if (!target_id || !emoji) return;
+
+    const sb = await createServerSupabaseClient();
+    const table = target_type === "post" ? "forum_posts" : "forum_comments";
+
+    const { data: current } = await sb
+      .from(table)
+      .select("reactions")
+      .eq("id", target_id)
+      .single();
+
+    const reactions: Record<string, number> =
+      current?.reactions && typeof current.reactions === "object"
+        ? { ...current.reactions }
+        : {};
+
+    reactions[emoji] = Number(reactions[emoji] || 0) + 1;
+
+    await sb.from(table).update({ reactions }).eq("id", target_id);
+    revalidatePath(`/${school.slug}`);
+  }
+
+  const filterTags = [
+    "#nước",
+    "#tôm",
+    "#bò",
+    "#heo",
+    "#gà",
+    "#hải-sản",
+    "#trứng",
+    "#chay",
+  ];
 
   const bestPickLines = [1, 2, 3, 4, 5]
     .map((d) => {
@@ -323,7 +508,7 @@ export default async function SchoolHomePage({
   const copySummaryText = `🍱 GỢI Ý ĐIỀN FORM MÓN ĂN TUẦN (${school.short_name}):\n${bestPickLines}\n👉 Xem bảng xếp hạng tại FoodHub!`;
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-20">
+    <div className="min-h-screen bg-[#F4F7F9] text-slate-900 pb-20">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -372,6 +557,7 @@ export default async function SchoolHomePage({
               displayName={auth.displayName}
               avatarUrl={auth.avatarUrl}
               roleBadge={auth.roleBadge}
+              customRoles={auth.customRoles}
               redirectPath={`/${school.slug}`}
             />
           </div>
@@ -379,7 +565,7 @@ export default async function SchoolHomePage({
       </header>
 
       <main className="max-w-5xl mx-auto px-4 pt-6 space-y-8">
-        {/* KHU VỰC 1: DANH SÁCH MÓN ĂN GỌN GÀNG */}
+        {/* KHU VỰC 1: DANH SÁCH MÓN ĂN */}
         <section className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 space-y-5 shadow-2xs">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="inline-flex p-1 rounded-2xl bg-slate-100">
@@ -439,17 +625,13 @@ export default async function SchoolHomePage({
               <p className="text-sm font-bold text-slate-700">
                 Chưa có món ăn nào trong mục này
               </p>
-              <a
-                href={`/${school.slug}/admin`}
-                className="inline-block text-xs font-bold text-[#0F766E] underline"
-              >
-                + Bấm vào đây để thêm món ăn cho trường {school.short_name}
-              </a>
             </div>
           ) : (
             <CompactDishGrid
               dishes={dishes ?? []}
               reviewsByDish={reviewsByDish}
+              currentUser={currentUserInfo}
+              profileMap={profileMap}
               onUpsertReview={upsertReviewAction}
               onDeleteReview={deleteReviewAction}
             />
@@ -643,6 +825,7 @@ export default async function SchoolHomePage({
           <SmartTicketSwapBoard
             weeklyItems={weeklyItems ?? []}
             swaps={swaps ?? []}
+            currentUser={currentUserInfo}
             onCreateSwap={createSwapAction}
             onAcceptSwap={acceptSwapAction}
             onReopenSwap={reopenSwapAction}
@@ -650,7 +833,7 @@ export default async function SchoolHomePage({
           />
         </section>
 
-        {/* KHU VỰC 5: DIỄN ĐÀN ẨM THỰC TRƯỜNG */}
+        {/* KHU VỰC 5: DIỄN ĐÀN ẨM THỰC TRƯỜNG (SINH ĐỘNG + ROLE + XÓA SỔ HOÀNG ĐẾ) */}
         <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-2xs">
           <div className="flex items-center gap-2">
             <MessageSquare className="w-5 h-5 text-[#0F766E]" />
@@ -659,8 +842,8 @@ export default async function SchoolHomePage({
                 Diễn Đàn Ẩm Thực Căn Tin {school.short_name}
               </h2>
               <p className="text-xs text-slate-500">
-                Khoe khay cơm trưa, bàn luận món mới và bấm vào từng bài để
-                chat trả lời nhau
+                Tự động hiển thị Avatar & Role danh hiệu • Hỗ trợ thả cảm xúc,
+                trả lời tin nhắn và thu hồi / xóa sổ
               </p>
             </div>
           </div>
@@ -668,8 +851,13 @@ export default async function SchoolHomePage({
           <ForumSectionClient
             posts={forumPosts ?? []}
             commentsByPost={commentsByPost}
+            currentUser={currentUserInfo}
+            profileMap={profileMap}
             onCreatePost={createForumPostAction}
+            onDeletePost={deleteForumPostAction}
             onCreateComment={createForumCommentAction}
+            onDeleteComment={deleteForumCommentAction}
+            onReactItem={reactForumItemAction}
           />
         </section>
       </main>

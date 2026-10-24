@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Star,
   Heart,
@@ -17,10 +17,44 @@ import {
   Handshake,
   MapPin,
   RotateCcw,
+  Reply,
+  Crown,
+  ShieldAlert,
+  Undo2,
 } from "lucide-react";
 import { createBrowserSupabaseClient } from "@/app/lib/supabase/client";
 
-function getOrCreateReviewerKey(): string {
+export interface CurrentUserClientInfo {
+  email: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  roleBadge: string;
+  isGod: boolean;
+  canManageSchool: boolean;
+  customRoles: Array<{
+    id: string;
+    name: string;
+    bg_color: string;
+    text_color: string;
+  }>;
+}
+
+export type EnrichedProfileMap = Record<
+  string,
+  {
+    display_name?: string;
+    avatar_url?: string;
+    roles?: Array<{
+      id: string;
+      name: string;
+      bg_color: string;
+      text_color: string;
+    }>;
+  }
+>;
+
+function getOrCreateReviewerKey(userEmail?: string | null): string {
+  if (userEmail) return `google_${userEmail}`;
   if (typeof window === "undefined") return "server";
   let key = localStorage.getItem("foodhub_reviewer_key");
   if (!key) {
@@ -34,17 +68,96 @@ function getOrCreateReviewerKey(): string {
   return key;
 }
 
+// Component con: Hiển thị Avatar + Tên + Huy hiệu GOD/Admin + Các Role màu sắc của 1 người
+function UserIdentityBadge({
+  name,
+  email,
+  avatar,
+  systemBadge,
+  profileMap,
+  size = "sm",
+}: {
+  name: string;
+  email?: string | null;
+  avatar?: string | null;
+  systemBadge?: string | null;
+  profileMap: EnrichedProfileMap;
+  size?: "sm" | "md";
+}) {
+  const cleanEmail = email?.toLowerCase().trim() || "";
+  const enriched = cleanEmail ? profileMap[cleanEmail] : undefined;
+
+  const finalName = enriched?.display_name || name || "Học sinh";
+  const finalAvatar = enriched?.avatar_url || avatar || null;
+  const customRoles = enriched?.roles || [];
+
+  const isGodUser =
+    cleanEmail === "nguyenphutrong11102010@gmail.com" ||
+    systemBadge?.includes("GOD");
+
+  return (
+    <div className="inline-flex items-center gap-2 flex-wrap">
+      {finalAvatar ? (
+        <img
+          src={finalAvatar}
+          alt={finalName}
+          className={`${
+            size === "md" ? "w-8 h-8" : "w-6 h-6"
+          } rounded-full object-cover border border-teal-500/40 shrink-0`}
+        />
+      ) : (
+        <div
+          className={`${
+            size === "md" ? "w-8 h-8 text-xs" : "w-6 h-6 text-[10px]"
+          } rounded-full bg-[#0F766E] text-white font-extrabold flex items-center justify-center shrink-0`}
+        >
+          {finalName[0]?.toUpperCase()}
+        </div>
+      )}
+
+      <span className="font-extrabold text-slate-900">{finalName}</span>
+
+      {/* Huy hiệu chức vụ hệ thống */}
+      {isGodUser ? (
+        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+          👑 GOD
+        </span>
+      ) : systemBadge &&
+        (systemBadge.includes("Admin") || systemBadge.includes("Phó")) ? (
+        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-teal-50 text-[#0F766E] border border-teal-200">
+          {systemBadge}
+        </span>
+      ) : null}
+
+      {/* Các Role Danh Hiệu màu sắc (Thực thần, Thánh ăn...) */}
+      {customRoles.map((r) => (
+        <span
+          key={r.id}
+          style={{ backgroundColor: r.bg_color, color: r.text_color }}
+          className="text-[10px] font-extrabold px-2 py-0.5 rounded-full shadow-2xs"
+        >
+          {r.name}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // ============================================================================
-// 1. LƯỚI THẺ MÓN ĂN THU GỌN + POPUP CHI TIẾT KHI CLICK VÀO MÓN
+// 1. LƯỚI THẺ MÓN ĂN + POPUP ĐÁNH GIÁ (ẨN Ô NHẬP TÊN NẾU ĐÃ ĐĂNG NHẬP)
 // ============================================================================
 export function CompactDishGrid({
   dishes,
   reviewsByDish,
+  currentUser,
+  profileMap,
   onUpsertReview,
   onDeleteReview,
 }: {
   dishes: any[];
   reviewsByDish: Record<string, any[]>;
+  currentUser: CurrentUserClientInfo;
+  profileMap: EnrichedProfileMap;
   onUpsertReview: (formData: FormData) => Promise<void>;
   onDeleteReview: (formData: FormData) => Promise<void>;
 }) {
@@ -57,21 +170,31 @@ export function CompactDishGrid({
   const [likedMap, setLikedMap] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    const key = getOrCreateReviewerKey();
+    const key = getOrCreateReviewerKey(currentUser.email);
     setReviewerKey(key);
-    const savedName = localStorage.getItem("foodhub_student_name") || "";
-    setReviewerName(savedName);
-  }, []);
+    if (currentUser.displayName) {
+      setReviewerName(currentUser.displayName);
+    } else {
+      const savedName = localStorage.getItem("foodhub_student_name") || "";
+      setReviewerName(savedName);
+    }
+  }, [currentUser.email, currentUser.displayName]);
 
   const openDishModal = (dish: any) => {
     setSelectedDish(dish);
     const dishReviews = reviewsByDish[dish.id] || [];
-    const myExisting = dishReviews.find((r) => r.reviewer_key === reviewerKey);
+    const myExisting = dishReviews.find(
+      (r) =>
+        r.reviewer_key === reviewerKey ||
+        (currentUser.email && r.reviewer_email === currentUser.email)
+    );
     if (myExisting) {
       setRating(myExisting.rating);
       setBody(myExisting.body || "");
       setSelectedTag(myExisting.tags?.[0] || "#ĐậmĐà");
-      if (myExisting.reviewer_name) setReviewerName(myExisting.reviewer_name);
+      if (!currentUser.email && myExisting.reviewer_name) {
+        setReviewerName(myExisting.reviewer_name);
+      }
     } else {
       setRating(5);
       setBody("");
@@ -109,7 +232,9 @@ export function CompactDishGrid({
     ? reviewsByDish[selectedDish.id] || []
     : [];
   const myReview = currentDishReviews.find(
-    (r) => r.reviewer_key === reviewerKey
+    (r) =>
+      r.reviewer_key === reviewerKey ||
+      (currentUser.email && r.reviewer_email === currentUser.email)
   );
 
   return (
@@ -265,23 +390,9 @@ export function CompactDishGrid({
                 {selectedDish.description ||
                   "Món ăn phục vụ tại căn tin nhà trường."}
               </p>
-              {selectedDish.ingredient_tags?.length > 0 && (
-                <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                  <span className="text-slate-500 font-semibold">
-                    Thành phần:
-                  </span>
-                  {selectedDish.ingredient_tags.map((t: string) => (
-                    <span
-                      key={t}
-                      className="bg-white border border-slate-200 px-2 py-0.5 rounded-md font-semibold text-slate-700"
-                    >
-                      {t}
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
 
+            {/* Khung chấm sao */}
             <div className="rounded-2xl border-2 border-teal-600/20 bg-teal-50/30 p-4 space-y-3 text-xs">
               <div className="flex items-center justify-between">
                 <span className="font-extrabold text-slate-900 text-sm">
@@ -305,7 +416,7 @@ export function CompactDishGrid({
                     <input
                       type="hidden"
                       name="reviewer_key"
-                      value={reviewerKey}
+                      value={myReview.reviewer_key || reviewerKey}
                     />
                     <button
                       type="submit"
@@ -320,7 +431,7 @@ export function CompactDishGrid({
 
               <form
                 action={async (fd) => {
-                  if (reviewerName) {
+                  if (!currentUser.email && reviewerName) {
                     localStorage.setItem("foodhub_student_name", reviewerName);
                   }
                   await onUpsertReview(fd);
@@ -332,6 +443,22 @@ export function CompactDishGrid({
                 <input type="hidden" name="reviewer_key" value={reviewerKey} />
                 <input type="hidden" name="rating" value={rating} />
                 <input type="hidden" name="tag" value={selectedTag} />
+
+                {/* Nếu ĐÃ ĐĂNG NHẬP: Hiện thẻ Avatar + Tên + Role luôn, ẩn ô nhập tên */}
+                {currentUser.email ? (
+                  <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-teal-200">
+                    <span className="text-[11px] text-slate-500 font-semibold">
+                      Đánh giá với tư cách:
+                    </span>
+                    <UserIdentityBadge
+                      name={currentUser.displayName || "Học sinh"}
+                      email={currentUser.email}
+                      avatar={currentUser.avatarUrl}
+                      systemBadge={currentUser.roleBadge}
+                      profileMap={profileMap}
+                    />
+                  </div>
+                ) : null}
 
                 <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-slate-200">
                   <span className="font-bold text-slate-700">
@@ -374,22 +501,34 @@ export function CompactDishGrid({
                   ))}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <input
-                    name="reviewer_name"
-                    value={reviewerName}
-                    onChange={(e) => setReviewerName(e.target.value)}
-                    placeholder="Tên bạn (VD: Khôi 11A)"
-                    className="p-2.5 bg-white border border-slate-200 rounded-xl font-semibold"
-                  />
+                {/* Chỉ hiện ô nhập tên nếu CHƯA đăng nhập */}
+                {currentUser.email ? (
                   <input
                     name="body"
                     value={body}
                     onChange={(e) => setBody(e.target.value)}
                     placeholder="Nhận xét về hương vị, khẩu phần..."
-                    className="sm:col-span-2 p-2.5 bg-white border border-slate-200 rounded-xl"
+                    className="w-full p-2.5 bg-white border border-slate-200 rounded-xl"
                   />
-                </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input
+                      name="reviewer_name"
+                      required
+                      value={reviewerName}
+                      onChange={(e) => setReviewerName(e.target.value)}
+                      placeholder="Tên bạn (VD: Khôi 11A) *"
+                      className="p-2.5 bg-white border border-slate-200 rounded-xl font-semibold"
+                    />
+                    <input
+                      name="body"
+                      value={body}
+                      onChange={(e) => setBody(e.target.value)}
+                      placeholder="Nhận xét về hương vị, khẩu phần..."
+                      className="sm:col-span-2 p-2.5 bg-white border border-slate-200 rounded-xl"
+                    />
+                  </div>
+                )}
 
                 <button
                   type="submit"
@@ -405,6 +544,7 @@ export function CompactDishGrid({
               </form>
             </div>
 
+            {/* Danh sách nhận xét của mọi người (Hiện đầy đủ Avatar + Tên + Role màu) */}
             <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
               <p className="font-bold text-slate-800">
                 Nhận xét từ học sinh ({currentDishReviews.length}):
@@ -414,17 +554,21 @@ export function CompactDishGrid({
                   Chưa có nhận xét nào. Hãy là người đầu tiên chấm sao!
                 </p>
               ) : (
-                <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
                   {currentDishReviews.map((rev: any) => (
                     <div
                       key={rev.id}
-                      className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-start justify-between gap-2"
+                      className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1.5"
                     >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-900">
-                            {rev.reviewer_name || "Học sinh"}
-                          </span>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <UserIdentityBadge
+                          name={rev.reviewer_name || "Học sinh"}
+                          email={rev.reviewer_email}
+                          avatar={rev.reviewer_avatar}
+                          systemBadge={rev.reviewer_badge}
+                          profileMap={profileMap}
+                        />
+                        <div className="flex items-center gap-1.5">
                           <span className="text-amber-500 font-bold">
                             {"⭐".repeat(rev.rating)}
                           </span>
@@ -434,10 +578,10 @@ export function CompactDishGrid({
                             </span>
                           )}
                         </div>
-                        {rev.body && (
-                          <p className="text-slate-600 mt-1">{rev.body}</p>
-                        )}
                       </div>
+                      {rev.body && (
+                        <p className="text-slate-700 pl-8">{rev.body}</p>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -451,11 +595,12 @@ export function CompactDishGrid({
 }
 
 // ============================================================================
-// 2. SÀN ĐỔI PHIẾU ĂN THÔNG MINH 2 CHIỀU (TỰ LẤY MÓN 1-4 THEO NGÀY + NHẬN KÈO)
+// 2. SÀN ĐỔI PHIẾU ĂN THÔNG MINH 2 CHIỀU
 // ============================================================================
 export function SmartTicketSwapBoard({
   weeklyItems,
   swaps,
+  currentUser,
   onCreateSwap,
   onAcceptSwap,
   onReopenSwap,
@@ -463,14 +608,14 @@ export function SmartTicketSwapBoard({
 }: {
   weeklyItems: any[];
   swaps: any[];
+  currentUser?: CurrentUserClientInfo;
   onCreateSwap: (formData: FormData) => Promise<void>;
   onAcceptSwap: (formData: FormData) => Promise<void>;
   onReopenSwap: (formData: FormData) => Promise<void>;
   onDeleteSwap: (formData: FormData) => Promise<void>;
 }) {
-  // Tự động chọn Thứ hôm nay (nếu Thứ 7/CN thì mặc định Thứ 2 = 1)
   const [selectedDay, setSelectedDay] = useState<number>(() => {
-    const jsDay = new Date().getDay(); // 0: CN, 1: T2 ... 5: T6
+    const jsDay = new Date().getDay();
     return jsDay >= 1 && jsDay <= 5 ? jsDay : 1;
   });
 
@@ -486,7 +631,6 @@ export function SmartTicketSwapBoard({
     { day: 5, label: "Thứ 6" },
   ];
 
-  // Lấy đúng 4 món ăn của ngày đang chọn từ thực đơn tuần
   const dayMenu = (weeklyItems ?? []).filter(
     (item) => Number(item.day_of_week) === selectedDay
   );
@@ -498,7 +642,6 @@ export function SmartTicketSwapBoard({
 
   return (
     <div className="space-y-5 text-xs">
-      {/* Bước chọn Thứ trong tuần để tự nạp 4 món */}
       <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-200">
         <span className="font-bold text-slate-700">
           📅 Chọn ngày cần đổi phiếu ăn:
@@ -521,7 +664,6 @@ export function SmartTicketSwapBoard({
         </div>
       </div>
 
-      {/* Form Đăng đổi phiếu: Không cần gõ tên món, tự động lấy Món 1, 2, 3, 4 của Thứ đã chọn */}
       <form
         action={onCreateSwap}
         className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 bg-teal-50/40 p-4 rounded-2xl border border-teal-200"
@@ -540,11 +682,12 @@ export function SmartTicketSwapBoard({
 
         <div>
           <label className="font-bold text-slate-700 block mb-1">
-            1. Tên & Lớp người đăng *
+            1. Người đăng đổi phiếu *
           </label>
           <input
             name="student_name"
             required
+            defaultValue={currentUser?.displayName || ""}
             placeholder="VD: Khoa 11A1"
             className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-semibold"
           />
@@ -605,19 +748,12 @@ export function SmartTicketSwapBoard({
               Đăng
             </button>
           </div>
-          {haveSlot === wantSlot && (
-            <p className="text-[10px] text-red-600 font-semibold mt-1">
-              * Hãy chọn 2 món khác nhau để đổi nhé!
-            </p>
-          )}
         </div>
       </form>
 
-      {/* Danh sách các đơn đổi phiếu */}
       {swaps.length === 0 ? (
         <p className="text-xs text-slate-500 py-3 text-center">
-          Hiện chưa có đơn đổi phiếu ăn nào đang mở. Hãy đăng đơn đầu tiên ở
-          trên nhé!
+          Hiện chưa có đơn đổi phiếu ăn nào đang mở.
         </p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
@@ -658,7 +794,6 @@ export function SmartTicketSwapBoard({
                     </p>
                   </div>
 
-                  {/* Nút xóa đơn nếu đăng nhầm */}
                   <form action={onDeleteSwap}>
                     <input type="hidden" name="swap_id" value={sw.id} />
                     <button
@@ -671,7 +806,6 @@ export function SmartTicketSwapBoard({
                   </form>
                 </div>
 
-                {/* Thông tin người đăng & vị trí hẹn */}
                 <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-200/70 space-y-1 text-[11px]">
                   <p className="text-slate-700">
                     👤 Người đăng: <strong>{sw.creator_name}</strong>
@@ -701,7 +835,6 @@ export function SmartTicketSwapBoard({
                   )}
                 </div>
 
-                {/* Nút bấm cho người khác vào Nhận kèo & Đổi vị trí hẹn */}
                 {!isMatched ? (
                   <div className="space-y-2">
                     <button
@@ -730,19 +863,20 @@ export function SmartTicketSwapBoard({
                         <input type="hidden" name="swap_id" value={sw.id} />
                         <div>
                           <label className="font-bold text-slate-700 block mb-1">
-                            Tên & Lớp của bạn (Người nhận đổi) *
+                            Tên & Lớp của bạn *
                           </label>
                           <input
                             name="accepter_name"
                             required
+                            defaultValue={currentUser?.displayName || ""}
                             placeholder="VD: Lan 11B2"
                             className="w-full p-2 bg-white border border-slate-200 rounded-xl font-semibold"
                           />
                         </div>
                         <div>
                           <label className="font-bold text-slate-700 block mb-1">
-                            Muốn đổi sang vị trí hẹn khác? (Bỏ trống nếu đồng ý
-                            chỗ cũ)
+                            Muốn đổi sang vị trí hẹn khác? (Bỏ trống nếu giữ chỗ
+                            cũ)
                           </label>
                           <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2">
                             <MapPin className="w-3.5 h-3.5 text-[#0F766E] shrink-0" />
@@ -821,45 +955,71 @@ export function CopyWeeklyPicksButton({
 }
 
 // ============================================================================
-// 4. DIỄN ĐÀN (FORUM) CÓ ĐĂNG BÀI + DÁN ẢNH CTRL+V + TRẢ LỜI / CHAT QUA LẠI
+// 4. DIỄN ĐÀN (FORUM) SIÊU SINH ĐỘNG: AVATAR + ROLE + EMOJI + TRẢ LỜI + XÓA CÓ DẤU VẾT
 // ============================================================================
+const EMOJI_LIST = ["❤️", "😂", "🔥", "🤤", "😢"];
+
 export function ForumSectionClient({
   posts,
   commentsByPost,
+  currentUser,
+  profileMap,
   onCreatePost,
+  onDeletePost,
   onCreateComment,
+  onDeleteComment,
+  onReactItem,
 }: {
   posts: any[];
   commentsByPost: Record<string, any[]>;
+  currentUser: CurrentUserClientInfo;
+  profileMap: EnrichedProfileMap;
   onCreatePost: (formData: FormData) => Promise<void>;
+  onDeletePost: (formData: FormData) => Promise<void>;
   onCreateComment: (formData: FormData) => Promise<void>;
+  onDeleteComment: (formData: FormData) => Promise<void>;
+  onReactItem: (formData: FormData) => Promise<void>;
 }) {
   const [imageUrl, setImageUrl] = useState("");
   const [uploading, setUploading] = useState(false);
   const [openCommentPostId, setOpenCommentPostId] = useState<string | null>(
     posts[0]?.id ?? null
   );
+  const [replyingToMap, setReplyingToMap] = useState<Record<string, string>>(
+    {}
+  );
+  const commentInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
+  // Nén ảnh dán Ctrl+V trực tiếp thành DataURL để không bao giờ bị lỗi Storage
   const handleUploadFile = async (file: File) => {
+    if (!file.type.startsWith("image/")) return;
     setUploading(true);
     try {
-      const supabase = createBrowserSupabaseClient();
-      const ext = file.name.split(".").pop() || "png";
-      const filePath = `forum/${Date.now()}-${Math.random()
-        .toString(36)
-        .slice(2)}.${ext}`;
-
-      const { error } = await supabase.storage
-        .from("foodhub-images")
-        .upload(filePath, file);
-
-      if (!error) {
-        const { data } = supabase.storage
-          .from("foodhub-images")
-          .getPublicUrl(filePath);
-        setImageUrl(data.publicUrl);
-      }
-    } finally {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const MAX_W = 720;
+          let w = img.width;
+          let h = img.height;
+          if (w > MAX_W) {
+            h = Math.round((h * MAX_W) / w);
+            w = MAX_W;
+          }
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, w, h);
+            setImageUrl(canvas.toDataURL("image/jpeg", 0.82));
+          }
+          setUploading(false);
+        };
+        img.src = String(e.target?.result || "");
+      };
+      reader.readAsDataURL(file);
+    } catch {
       setUploading(false);
     }
   };
@@ -875,45 +1035,86 @@ export function ForumSectionClient({
     }
   };
 
+  const handleReplyClick = (postId: string, targetAuthorName: string) => {
+    setReplyingToMap((prev) => ({ ...prev, [postId]: targetAuthorName }));
+    setTimeout(() => {
+      commentInputRefs.current[postId]?.focus();
+    }, 50);
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
+      {/* KHUNG ĐĂNG BÀI VIẾT FORUM MỚI */}
       <form
         action={async (fd) => {
           await onCreatePost(fd);
           setImageUrl("");
         }}
         onPaste={handlePasteImage}
-        className="bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-3 text-xs"
+        className="bg-slate-50 rounded-3xl border border-slate-200 p-4 sm:p-5 space-y-3.5 text-xs"
       >
         <input type="hidden" name="image_url" value={imageUrl} />
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <input
-            name="author_name"
-            required
-            placeholder="Tên / Biệt danh của bạn (VD: Minh 10 Tin)"
-            className="p-2.5 bg-white border border-slate-200 rounded-xl font-semibold"
-          />
+        {/* Nếu ĐÃ ĐĂNG NHẬP: Hiện sẵn Avatar + Tên + Role, ẩn ô nhập tên */}
+        {currentUser.email ? (
+          <div className="flex items-center justify-between flex-wrap gap-2 bg-white px-3.5 py-2.5 rounded-2xl border border-teal-200/80">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-semibold text-slate-500">
+                Đăng thảo luận với tư cách:
+              </span>
+              <UserIdentityBadge
+                name={currentUser.displayName || "Học sinh"}
+                email={currentUser.email}
+                avatar={currentUser.avatarUrl}
+                systemBadge={currentUser.roleBadge}
+                profileMap={profileMap}
+              />
+            </div>
+            <a
+              href="/profile"
+              className="text-[11px] font-bold text-[#0F766E] hover:underline"
+            >
+              Đổi Avatar / Role →
+            </a>
+          </div>
+        ) : null}
+
+        {currentUser.email ? (
           <input
             name="title"
             required
-            placeholder="Chủ đề thảo luận (VD: Hôm nay món số 2 có ngon không mọi người?)"
-            className="sm:col-span-2 p-2.5 bg-white border border-slate-200 rounded-xl font-semibold"
+            placeholder="Tiêu đề chủ đề (VD: Hôm nay món số 2 có ngon không mọi người?)"
+            className="w-full p-3 bg-white border border-slate-200 rounded-2xl font-bold text-slate-900"
           />
-        </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <input
+              name="author_name"
+              required
+              placeholder="Tên / Biệt danh của bạn *"
+              className="p-3 bg-white border border-slate-200 rounded-2xl font-semibold"
+            />
+            <input
+              name="title"
+              required
+              placeholder="Tiêu đề chủ đề thảo luận *"
+              className="sm:col-span-2 p-3 bg-white border border-slate-200 rounded-2xl font-bold"
+            />
+          </div>
+        )}
 
         <textarea
           name="body"
           required
           rows={2}
           placeholder="Nhập nội dung thảo luận hoặc bấm Ctrl + V để dán ảnh khay cơm vào đây..."
-          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl"
+          className="w-full p-3 bg-white border border-slate-200 rounded-2xl"
         />
 
         {uploading && (
           <div className="inline-flex items-center gap-1.5 text-[#0F766E] font-semibold">
             <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Đang tải ảnh lên...</span>
+            <span>Đang xử lý ảnh...</span>
           </div>
         )}
 
@@ -922,7 +1123,7 @@ export function ForumSectionClient({
             <img
               src={imageUrl}
               alt="Ảnh đính kèm"
-              className="h-20 rounded-xl border border-slate-200 object-cover"
+              className="h-24 rounded-2xl border border-slate-200 object-cover"
             />
             <button
               type="button"
@@ -935,9 +1136,9 @@ export function ForumSectionClient({
         )}
 
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <label className="text-[11px] text-[#0F766E] font-bold inline-flex items-center gap-1.5 bg-white border border-teal-200 px-3 py-1.5 rounded-xl cursor-pointer hover:bg-teal-50">
-            <ImageIcon className="w-3.5 h-3.5" />
-            <span>Chọn ảnh hoặc dán Ctrl + V</span>
+          <label className="text-[11px] text-[#0F766E] font-bold inline-flex items-center gap-1.5 bg-white border border-teal-200 px-3.5 py-2 rounded-2xl cursor-pointer hover:bg-teal-50">
+            <ImageIcon className="w-4 h-4" />
+            <span>Đính kèm ảnh (Hoặc dán Ctrl + V)</span>
             <input
               type="file"
               accept="image/*"
@@ -952,107 +1153,375 @@ export function ForumSectionClient({
           <button
             type="submit"
             disabled={uploading}
-            className="px-4 py-2 bg-[#0F766E] text-white font-bold rounded-xl hover:bg-[#0F766E]/90 inline-flex items-center gap-1.5 transition cursor-pointer"
+            className="px-5 py-2.5 bg-[#0F766E] text-white font-bold rounded-2xl hover:bg-[#0F766E]/90 inline-flex items-center gap-1.5 transition cursor-pointer shadow-sm"
           >
             <MessageSquarePlus className="w-4 h-4" />
-            <span>Đăng bài lên Forum</span>
+            <span>Đăng lên Forum trường</span>
           </button>
         </div>
       </form>
 
-      <div className="space-y-3">
+      {/* DANH SÁCH CÁC CHỦ ĐỀ FORUM */}
+      <div className="space-y-4">
         {posts.length === 0 ? (
-          <p className="text-xs text-slate-400 text-center py-4">
+          <p className="text-xs text-slate-400 text-center py-6">
             Chưa có bài thảo luận nào. Hãy mở màn cuộc trò chuyện đầu tiên nhé!
           </p>
         ) : (
           posts.map((post: any) => {
             const comments = commentsByPost[post.id] || [];
             const isOpen = openCommentPostId === post.id;
+            const postReactions: Record<string, number> =
+              post.reactions && typeof post.reactions === "object"
+                ? post.reactions
+                : {};
+
+            const isPostOwner = Boolean(
+              currentUser.email &&
+                post.author_email &&
+                currentUser.email === post.author_email.toLowerCase().trim()
+            );
+            const canDeleteThisPost =
+              currentUser.isGod || currentUser.canManageSchool || isPostOwner;
+
+            const activeReplyTarget = replyingToMap[post.id] || "";
 
             return (
               <div
                 key={post.id}
-                className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3 text-xs"
+                className="p-5 rounded-3xl border border-slate-200 bg-white space-y-3.5 text-xs shadow-2xs"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="font-extrabold text-sm text-slate-900">
-                    {post.title}
-                  </h3>
-                  <span className="text-[11px] font-semibold text-[#0F766E] bg-teal-50 px-2.5 py-0.5 rounded-full shrink-0">
-                    👤 {post.author_name ?? "Học sinh"}
-                  </span>
+                {/* Header Bài Viết: Avatar + Tên + Role + Nút Xóa Forum */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1.5">
+                    <UserIdentityBadge
+                      name={post.author_name || "Học sinh"}
+                      email={post.author_email}
+                      avatar={post.author_avatar}
+                      systemBadge={post.author_badge}
+                      profileMap={profileMap}
+                      size="md"
+                    />
+                    <h3 className="font-extrabold text-base text-slate-900 pt-0.5">
+                      {post.title}
+                    </h3>
+                  </div>
+
+                  {/* Nút xóa bài Forum (Cho GOD, Admin trường hoặc Chính chủ) */}
+                  {canDeleteThisPost && (
+                    <form action={onDeletePost}>
+                      <input type="hidden" name="post_id" value={post.id} />
+                      <button
+                        type="submit"
+                        title="Xóa chủ đề Forum này"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 font-bold text-[11px] transition cursor-pointer shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Xóa bài</span>
+                      </button>
+                    </form>
+                  )}
                 </div>
 
-                <p className="text-slate-600 leading-relaxed">{post.body}</p>
+                <p className="text-slate-700 leading-relaxed text-[13px]">
+                  {post.body}
+                </p>
 
                 {post.image_url && (
                   <img
                     src={post.image_url}
                     alt={post.title}
-                    className="max-h-60 rounded-2xl border border-slate-200 object-cover"
+                    className="max-h-72 rounded-2xl border border-slate-200 object-cover"
                   />
                 )}
 
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                {/* Thanh Tương Tác Bài Viết: Thả Emoji + Nút Mở Khung Chat */}
+                <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
+                  {/* Dãy nút thả Emoji */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {EMOJI_LIST.map((emoji) => {
+                      const count = Number(postReactions[emoji] || 0);
+                      return (
+                        <form key={emoji} action={onReactItem}>
+                          <input type="hidden" name="target_type" value="post" />
+                          <input
+                            type="hidden"
+                            name="target_id"
+                            value={post.id}
+                          />
+                          <input type="hidden" name="emoji" value={emoji} />
+                          <button
+                            type="submit"
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border transition cursor-pointer hover:scale-105 ${
+                              count > 0
+                                ? "bg-teal-50 border-teal-200 text-[#0F766E]"
+                                : "bg-slate-50 border-slate-200/80 text-slate-500 hover:bg-slate-100"
+                            }`}
+                          >
+                            <span>{emoji}</span>
+                            {count > 0 && <span>{count}</span>}
+                          </button>
+                        </form>
+                      );
+                    })}
+                  </div>
+
                   <button
                     type="button"
                     onClick={() =>
                       setOpenCommentPostId(isOpen ? null : post.id)
                     }
-                    className="inline-flex items-center gap-1.5 font-bold text-[#0F766E] hover:underline cursor-pointer"
+                    className="inline-flex items-center gap-1.5 font-extrabold text-[#0F766E] bg-teal-50/70 hover:bg-teal-100/80 px-3.5 py-1.5 rounded-full transition cursor-pointer"
                   >
                     <MessageCircle className="w-4 h-4" />
                     <span>
                       {isOpen
-                        ? `Ẩn cuộc trò chuyện (${comments.length})`
-                        : `💬 Vào chat / Bình luận (${comments.length} phản hồi)`}
+                        ? `Thu gọn cuộc trò chuyện (${comments.length})`
+                        : `💬 Vào chat / Thảo luận (${comments.length})`}
                     </span>
                   </button>
                 </div>
 
+                {/* KHU VỰC CHAT / BÌNH LUẬN TRỰC TIẾP TRONG BÀI FORUM */}
                 {isOpen && (
-                  <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/80 space-y-3">
+                  <div className="bg-slate-50 rounded-3xl p-4 border border-slate-200/90 space-y-3.5">
                     {comments.length === 0 ? (
-                      <p className="text-slate-400 italic text-[11px]">
-                        Chưa có phản hồi nào. Hãy trả lời bạn ấy bên dưới nhé!
+                      <p className="text-slate-400 italic text-xs text-center py-2">
+                        Chưa có tin nhắn nào. Hãy mở màn cuộc trò chuyện bên
+                        dưới nhé!
                       </p>
                     ) : (
-                      <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                        {comments.map((c: any) => (
-                          <div
-                            key={c.id}
-                            className="bg-white p-2.5 rounded-xl border border-slate-200/70"
-                          >
-                            <span className="font-extrabold text-[#0F766E]">
-                              {c.author_name || "Học sinh"}:
-                            </span>{" "}
-                            <span className="text-slate-700">{c.body}</span>
-                          </div>
-                        ))}
+                      <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                        {comments.map((c: any) => {
+                          const isCommentOwner = Boolean(
+                            currentUser.email &&
+                              c.author_email &&
+                              currentUser.email ===
+                                c.author_email.toLowerCase().trim()
+                          );
+                          const canDeleteComment =
+                            currentUser.isGod ||
+                            currentUser.canManageSchool ||
+                            isCommentOwner;
+
+                          const commentReactions: Record<string, number> =
+                            c.reactions && typeof c.reactions === "object"
+                              ? c.reactions
+                              : {};
+
+                          const deletedRole = c.deleted_by_role;
+
+                          return (
+                            <div
+                              key={c.id}
+                              className="bg-white p-3 rounded-2xl border border-slate-200/80 space-y-2 shadow-2xs"
+                            >
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <UserIdentityBadge
+                                    name={c.author_name || "Học sinh"}
+                                    email={c.author_email}
+                                    avatar={c.author_avatar}
+                                    systemBadge={c.author_badge}
+                                    profileMap={profileMap}
+                                  />
+
+                                  {c.reply_to_name && !deletedRole && (
+                                    <span className="text-[11px] font-bold text-[#0F766E] bg-teal-50 px-2 py-0.5 rounded-lg">
+                                      ↩️ Trả lời @{c.reply_to_name}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Cụm nút Trả lời & Thu hồi / Xóa tin nhắn */}
+                                {!deletedRole && (
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleReplyClick(
+                                          post.id,
+                                          c.author_name || "Học sinh"
+                                        )
+                                      }
+                                      className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-[#0F766E] px-2 py-0.5 rounded-lg hover:bg-slate-100 cursor-pointer"
+                                    >
+                                      <Reply className="w-3 h-3" />
+                                      <span>Trả lời</span>
+                                    </button>
+
+                                    {canDeleteComment && (
+                                      <form action={onDeleteComment}>
+                                        <input
+                                          type="hidden"
+                                          name="comment_id"
+                                          value={c.id}
+                                        />
+                                        <button
+                                          type="submit"
+                                          title={
+                                            isCommentOwner && !currentUser.isGod
+                                              ? "Thu hồi tin nhắn"
+                                              : "Xóa sổ tin nhắn này"
+                                          }
+                                          className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 hover:bg-red-50 px-2 py-0.5 rounded-lg cursor-pointer"
+                                        >
+                                          {isCommentOwner &&
+                                          !currentUser.isGod &&
+                                          !currentUser.canManageSchool ? (
+                                            <>
+                                              <Undo2 className="w-3 h-3" />
+                                              <span>Thu hồi</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Trash2 className="w-3 h-3" />
+                                              <span>Xóa</span>
+                                            </>
+                                          )}
+                                        </button>
+                                      </form>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* NỘI DUNG TIN NHẮN HOẶC THÔNG BÁO ĐÃ BỊ XÓA SỔ */}
+                              {deletedRole === "god" ? (
+                                <div className="p-2.5 rounded-xl bg-gradient-to-r from-amber-100 via-yellow-50 to-amber-100 border border-amber-300 text-amber-950 font-extrabold text-xs flex items-center gap-2">
+                                  <Crown className="w-4 h-4 text-amber-600 shrink-0" />
+                                  <span>
+                                    (👑 Hoàng Đế đã xóa sổ tin nhắn này)
+                                  </span>
+                                </div>
+                              ) : deletedRole === "admin" ? (
+                                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 font-bold text-xs flex items-center gap-2">
+                                  <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0" />
+                                  <span>
+                                    (🛡️ Admin nhà trường đã xóa tin nhắn này)
+                                  </span>
+                                </div>
+                              ) : deletedRole === "self" ? (
+                                <p className="text-slate-400 italic text-xs pl-8">
+                                  💨 Tin nhắn đã được chính chủ thu hồi.
+                                </p>
+                              ) : (
+                                <>
+                                  <p className="text-slate-700 pl-8 leading-relaxed">
+                                    {c.body}
+                                  </p>
+
+                                  {/* Thả Emoji cho từng tin nhắn chat */}
+                                  <div className="pl-8 flex items-center gap-1 flex-wrap pt-0.5">
+                                    {EMOJI_LIST.map((emoji) => {
+                                      const cnt = Number(
+                                        commentReactions[emoji] || 0
+                                      );
+                                      return (
+                                        <form key={emoji} action={onReactItem}>
+                                          <input
+                                            type="hidden"
+                                            name="target_type"
+                                            value="comment"
+                                          />
+                                          <input
+                                            type="hidden"
+                                            name="target_id"
+                                            value={c.id}
+                                          />
+                                          <input
+                                            type="hidden"
+                                            name="emoji"
+                                            value={emoji}
+                                          />
+                                          <button
+                                            type="submit"
+                                            className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold border transition cursor-pointer ${
+                                              cnt > 0
+                                                ? "bg-teal-50 border-teal-200 text-[#0F766E]"
+                                                : "bg-slate-50 border-slate-200/60 text-slate-400 hover:text-slate-700"
+                                            }`}
+                                          >
+                                            <span>{emoji}</span>
+                                            {cnt > 0 && <span>{cnt}</span>}
+                                          </button>
+                                        </form>
+                                      );
+                                    })}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
 
+                    {/* Đang trả lời ai đó */}
+                    {activeReplyTarget && (
+                      <div className="flex items-center justify-between bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl text-[11px] font-bold text-[#0F766E]">
+                        <span>↩️ Đang trả lời @{activeReplyTarget}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setReplyingToMap((prev) => ({
+                              ...prev,
+                              [post.id]: "",
+                            }))
+                          }
+                          className="text-slate-500 hover:text-red-600 cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* FORM GÕ TIN NHẮN TRẢ LỜI (Ẩn ô nhập tên nếu đã đăng nhập) */}
                     <form
-                      action={onCreateComment}
+                      action={async (fd) => {
+                        await onCreateComment(fd);
+                        setReplyingToMap((prev) => ({
+                          ...prev,
+                          [post.id]: "",
+                        }));
+                      }}
                       className="flex flex-col sm:flex-row gap-2 pt-1"
                     >
                       <input type="hidden" name="post_id" value={post.id} />
                       <input
-                        name="author_name"
-                        required
-                        placeholder="Tên bạn..."
-                        className="sm:w-36 p-2 bg-white border border-slate-200 rounded-xl font-semibold"
+                        type="hidden"
+                        name="reply_to_name"
+                        value={activeReplyTarget}
                       />
+
+                      {!currentUser.email && (
+                        <input
+                          name="author_name"
+                          required
+                          placeholder="Tên bạn *"
+                          className="sm:w-36 p-2.5 bg-white border border-slate-200 rounded-xl font-semibold"
+                        />
+                      )}
+
                       <input
+                        ref={(el) => {
+                          commentInputRefs.current[post.id] = el;
+                        }}
                         name="body"
                         required
-                        placeholder="Viết câu trả lời của bạn..."
-                        className="flex-1 p-2 bg-white border border-slate-200 rounded-xl"
+                        placeholder={
+                          activeReplyTarget
+                            ? `Nhắn trả lời @${activeReplyTarget}...`
+                            : currentUser.email
+                            ? `Nhắn dưới tên ${currentUser.displayName}...`
+                            : "Viết câu trả lời của bạn..."
+                        }
+                        className="flex-1 p-2.5 bg-white border border-slate-200 rounded-xl"
                       />
+
                       <button
                         type="submit"
-                        className="px-3.5 py-2 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 inline-flex items-center justify-center gap-1 cursor-pointer shrink-0"
+                        className="px-4 py-2.5 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 inline-flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
                       >
                         <Send className="w-3.5 h-3.5" />
                         <span>Gửi</span>
