@@ -1,25 +1,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LogIn, LogOut, Loader2 } from "lucide-react";
+import { LogIn, LogOut, Loader2, User } from "lucide-react";
 import { createBrowserSupabaseClient } from "@/app/lib/supabase/client";
+import type { CustomRoleBadge } from "@/app/lib/auth";
 
 export function AuthButtonClient({
   userEmail,
   displayName,
   avatarUrl,
   roleBadge,
+  customRoles = [],
   redirectPath = "/",
 }: {
   userEmail: string | null;
   displayName: string | null;
   avatarUrl: string | null;
   roleBadge: string;
+  customRoles?: CustomRoleBadge[];
   redirectPath?: string;
 }) {
   const [loading, setLoading] = useState(false);
 
-  // Tự động đồng bộ tài khoản Google vào bộ nhớ trình duyệt để Chấm sao & Đổi phiếu lấy đúng tên thật
   useEffect(() => {
     if (userEmail) {
       localStorage.setItem("foodhub_reviewer_key", `google_${userEmail}`);
@@ -68,35 +70,67 @@ export function AuthButtonClient({
   }
 
   return (
-    <div className="inline-flex items-center gap-2 bg-white border border-slate-200/90 pl-2.5 pr-2 py-1.5 rounded-2xl shadow-2xs text-xs">
-      {avatarUrl ? (
-        <img
-          src={avatarUrl}
-          alt={displayName || userEmail}
-          className="w-6 h-6 rounded-full object-cover border border-slate-200"
-        />
-      ) : (
-        <div className="w-6 h-6 rounded-full bg-[#0F766E] text-white font-extrabold text-[10px] flex items-center justify-center">
-          {(displayName || userEmail)[0]?.toUpperCase()}
-        </div>
-      )}
+    <div className="inline-flex items-center gap-1.5 bg-white border border-slate-200/90 pl-2 pr-1.5 py-1.5 rounded-2xl shadow-2xs text-xs">
+      {/* Bấm vào Avatar / Tên để mở trang Hồ Sơ Cá Nhân (/profile) */}
+      <a
+        href="/profile"
+        title="Bấm để vào Trang Hồ Sơ Cá Nhân & Chỉnh sửa Role"
+        className="inline-flex items-center gap-2 hover:opacity-85 transition pr-1"
+      >
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt={displayName || userEmail}
+            className="w-7 h-7 rounded-full object-cover border border-teal-500/40"
+          />
+        ) : (
+          <div className="w-7 h-7 rounded-full bg-[#0F766E] text-white font-extrabold text-[11px] flex items-center justify-center">
+            {(displayName || userEmail)[0]?.toUpperCase()}
+          </div>
+        )}
 
-      <div className="hidden sm:flex items-center gap-1.5">
-        <span className="font-bold text-slate-800 max-w-28 truncate">
-          {displayName || userEmail}
-        </span>
-        <span
-          className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-            roleBadge.includes("GOD")
-              ? "bg-amber-100 text-amber-900"
-              : roleBadge.includes("Admin")
-              ? "bg-teal-50 text-[#0F766E]"
-              : "bg-slate-100 text-slate-600"
-          }`}
-        >
-          {roleBadge}
-        </span>
-      </div>
+        <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
+          <span className="font-extrabold text-slate-900 max-w-28 truncate">
+            {displayName || userEmail}
+          </span>
+
+          {/* Huy hiệu chức vụ hệ thống */}
+          <span
+            className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+              roleBadge.includes("GOD")
+                ? "bg-amber-100 text-amber-900"
+                : roleBadge.includes("Admin")
+                ? "bg-teal-50 text-[#0F766E]"
+                : "bg-slate-100 text-slate-600"
+            }`}
+          >
+            {roleBadge}
+          </span>
+
+          {/* Hiển thị Role Danh Hiệu tùy chỉnh (Thực thần, Thánh ăn...) với đúng màu nền & màu chữ */}
+          {customRoles.slice(0, 2).map((r) => (
+            <span
+              key={r.id}
+              style={{
+                backgroundColor: r.bg_color,
+                color: r.text_color,
+              }}
+              className="text-[10px] font-extrabold px-2 py-0.5 rounded-full shadow-2xs"
+            >
+              {r.name}
+            </span>
+          ))}
+        </div>
+      </a>
+
+      <a
+        href="/profile"
+        title="Chỉnh sửa Hồ sơ & Role"
+        className="p-1.5 rounded-xl bg-teal-50 text-[#0F766E] hover:bg-teal-100 font-bold inline-flex items-center gap-1 transition"
+      >
+        <User className="w-3.5 h-3.5" />
+        <span className="hidden md:inline text-[11px]">Hồ sơ</span>
+      </a>
 
       <button
         type="button"
