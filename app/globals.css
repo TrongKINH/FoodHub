@@ -1,0 +1,13 @@
+/* File CSS toàn cục chuẩn — Không còn cảnh báo @theme trong Terminal */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #f8fafc;
+  color: #0f172a;
+  scroll-behavior: smooth;
+}
