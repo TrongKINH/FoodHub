@@ -1,3 +1,4 @@
+import { TopFoodiesBoard } from "./TopFoodiesBoard";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
@@ -603,7 +604,19 @@ export default async function SchoolHomePage({
           </div>
         </div>
       </header>
-
+{/* KHU VỰC 6: BẢNG VINH DANH TOP THỰC THẦN SÔI NỔI NHẤT TRƯỜNG */}
+        <TopFoodiesBoard
+          schoolShortName={school.short_name}
+          schoolDishes={allSchoolDishes ?? []}
+          reviews={allReviews ?? []}
+          posts={forumPosts ?? []}
+          comments={forumComments ?? []}
+          profileMap={profileMap}
+          currentUser={currentUserInfo}
+          allCustomRoles={allCustomRoles ?? []}
+          onAssignRole={assignUserRoleQuickAction}
+          onRevokeRole={revokeUserRoleQuickAction}
+        />
       <main className="max-w-5xl mx-auto px-4 pt-6 space-y-8">
         <section className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 space-y-5 shadow-2xs">
           <div className="flex flex-wrap items-center justify-between gap-3">
