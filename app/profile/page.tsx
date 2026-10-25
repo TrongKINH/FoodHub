@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   Award,
   Save,
-  Shield,
   Trash2,
   UserCheck,
   UserPlus,
@@ -15,6 +14,7 @@ import { AuthButtonClient } from "@/app/AuthButtonClient";
 import {
   AvatarPickerClient,
   RoleCreatorLiveClient,
+  InstantProfileForm,
 } from "./AvatarRoleClient";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +37,6 @@ export default async function ProfilePage() {
       .order("created_at", { ascending: false }),
   ]);
 
-  // 1. Lưu cập nhật Hồ sơ cá nhân (Username, Avatar, Bio, Lớp)
   async function saveProfileAction(formData: FormData) {
     "use server";
     const currentAuth = await getCurrentUserRole();
@@ -67,7 +66,6 @@ export default async function ProfilePage() {
     revalidatePath("/");
   }
 
-  // 2. Tạo Role mới (Chỉ dành cho Admin / GOD)
   async function createRoleAction(formData: FormData) {
     "use server";
     const currentAuth = await getCurrentUserRole();
@@ -90,7 +88,6 @@ export default async function ProfilePage() {
     revalidatePath("/profile");
   }
 
-  // 3. Cấp Role cho người dùng qua Gmail
   async function assignRoleToUserAction(formData: FormData) {
     "use server";
     const currentAuth = await getCurrentUserRole();
@@ -116,7 +113,6 @@ export default async function ProfilePage() {
     revalidatePath("/profile");
   }
 
-  // 4. Gỡ Role khỏi người dùng
   async function revokeRoleFromUserAction(formData: FormData) {
     "use server";
     const currentAuth = await getCurrentUserRole();
@@ -131,7 +127,6 @@ export default async function ProfilePage() {
     revalidatePath("/profile");
   }
 
-  // 5. Xóa Role khỏi hệ thống
   async function deleteRoleAction(formData: FormData) {
     "use server";
     const currentAuth = await getCurrentUserRole();
@@ -180,7 +175,6 @@ export default async function ProfilePage() {
   return (
     <div className="min-h-screen bg-[#F4F7F9] p-4 sm:p-8 pb-20">
       <div className="max-w-4xl mx-auto space-y-6">
-        {/* Thanh điều hướng */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <a
             href="/"
@@ -200,7 +194,7 @@ export default async function ProfilePage() {
           />
         </div>
 
-        {/* KHU VỰC 1: THẺ HỒ SƠ CÁ NHÂN CỦA BẠN (LIVE PROFILE CARD) */}
+        {/* KHU VỰC 1: THẺ HỒ SƠ CÁ NHÂN CỦA BẠN */}
         <section className="bg-gradient-to-br from-slate-900 via-teal-950 to-[#0F766E] text-white rounded-3xl p-6 sm:p-8 shadow-lg flex flex-col sm:flex-row items-center gap-6">
           {auth.avatarUrl ? (
             <img
@@ -228,7 +222,6 @@ export default async function ProfilePage() {
               &ldquo;{auth.bio}&rdquo;
             </p>
 
-            {/* Hàng hiển thị tất cả Role Danh Hiệu đang sở hữu */}
             <div className="flex items-center justify-center sm:justify-start flex-wrap gap-2 pt-1">
               <span className="text-xs font-extrabold bg-amber-400 text-slate-950 px-3 py-1 rounded-full shadow-xs">
                 {auth.roleBadge}
@@ -267,13 +260,17 @@ export default async function ProfilePage() {
                 Chỉnh Sửa Hồ Sơ Cá Nhân
               </h2>
               <p className="text-xs text-slate-500">
-                Thay đổi biệt danh (Username), ảnh đại diện và giới thiệu bản
-                thân của bạn trên FoodHub
+                Bấm Lưu sẽ hiện thông báo và cập nhật ngay lên Thẻ Hồ Sơ phía
+                trên
               </p>
             </div>
           </div>
 
-          <form action={saveProfileAction} className="space-y-4 text-xs">
+          <InstantProfileForm
+            action={saveProfileAction}
+            successMessage="👤 Đã cập nhật Hồ sơ cá nhân thành công!"
+            className="space-y-4 text-xs"
+          >
             <AvatarPickerClient
               defaultAvatar={auth.avatarUrl || ""}
               displayName={auth.displayName || auth.email}
@@ -324,12 +321,12 @@ export default async function ProfilePage() {
               className="px-6 py-3 bg-[#0F766E] hover:bg-[#0F766E]/90 text-white font-bold rounded-2xl inline-flex items-center gap-2 transition cursor-pointer shadow-sm"
             >
               <Save className="w-4 h-4" />
-              <span>Lưu Hồ Sơ Cá Nhân</span>
+              <span>Lưu Hồ Sơ Cá Nhân Ngay</span>
             </button>
-          </form>
+          </InstantProfileForm>
         </section>
 
-        {/* KHU VỰC 3: XƯỞNG CHẾ TẠO & CẤP ROLE DANH HIỆU (CHỈ HIỆN CHO ADMIN & GOD) */}
+        {/* KHU VỰC 3: XƯỞNG CHẾ TẠO & CẤP ROLE DANH HIỆU */}
         {auth.canManageRoles && (
           <section className="bg-white rounded-3xl border-2 border-amber-300/80 p-5 sm:p-6 space-y-6">
             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -348,12 +345,11 @@ export default async function ProfilePage() {
               </div>
             </div>
 
-            {/* 1. Khung Tạo Role + Chọn Màu Nền & Màu Chữ */}
             <RoleCreatorLiveClient onCreateRole={createRoleAction} />
 
-            {/* 2. Khung Cấp Role Cho Người Dùng Qua Gmail */}
-            <form
+            <InstantProfileForm
               action={assignRoleToUserAction}
+              successMessage="🎖️ Đã cấp Role danh hiệu cho thành viên!"
               className="p-4 sm:p-5 rounded-3xl bg-teal-50/40 border border-teal-200 space-y-3 text-xs"
             >
               <div className="flex items-center gap-2 font-extrabold text-sm text-slate-900">
@@ -401,9 +397,8 @@ export default async function ProfilePage() {
                   </button>
                 </div>
               </div>
-            </form>
+            </InstantProfileForm>
 
-            {/* 3. Danh sách Kho Role & Những người đang sở hữu */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
               <div className="p-4 rounded-2xl border border-slate-200 space-y-2.5">
                 <p className="font-extrabold text-slate-900">
@@ -420,7 +415,10 @@ export default async function ProfilePage() {
                       className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-extrabold shadow-2xs"
                     >
                       <span>{r.name}</span>
-                      <form action={deleteRoleAction}>
+                      <InstantProfileForm
+                        action={deleteRoleAction}
+                        successMessage={`Đã xóa Role "${r.name}"`}
+                      >
                         <input type="hidden" name="role_id" value={r.id} />
                         <button
                           type="submit"
@@ -429,7 +427,7 @@ export default async function ProfilePage() {
                         >
                           <X className="w-3 h-3" />
                         </button>
-                      </form>
+                      </InstantProfileForm>
                     </div>
                   ))}
                 </div>
@@ -461,7 +459,10 @@ export default async function ProfilePage() {
                           </span>
                         )}
                       </div>
-                      <form action={revokeRoleFromUserAction}>
+                      <InstantProfileForm
+                        action={revokeRoleFromUserAction}
+                        successMessage="Đã gỡ Role khỏi thành viên!"
+                      >
                         <input
                           type="hidden"
                           name="assignment_id"
@@ -474,7 +475,7 @@ export default async function ProfilePage() {
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
-                      </form>
+                      </InstantProfileForm>
                     </div>
                   ))}
                 </div>

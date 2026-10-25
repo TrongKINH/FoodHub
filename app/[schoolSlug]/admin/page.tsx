@@ -14,9 +14,12 @@ import {
   X,
 } from "lucide-react";
 import { createServerSupabaseClient } from "@/app/lib/supabase/server";
+import { getCurrentUserRole } from "@/app/lib/auth";
+import { AuthButtonClient } from "@/app/AuthButtonClient";
 import {
   DishImagePasteInput,
   EditableDishRow,
+  InstantActionForm,
 } from "./DishImagePasteInput";
 
 export const dynamic = "force-dynamic";
@@ -60,6 +63,40 @@ export default async function SchoolAdminPage({
     notFound();
   }
 
+  const auth = await getCurrentUserRole(school);
+  if (!auth.canManageSchool) {
+    return (
+      <div className="min-h-screen bg-[#F4F7F9] flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl border border-slate-200 p-8 max-w-md w-full text-center space-y-4">
+          <h1 className="text-xl font-extrabold text-slate-900">
+            Khu Vực Quản Trị Trường {school.short_name}
+          </h1>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Vui lòng đăng nhập bằng Gmail của <strong>Admin chính</strong>,{" "}
+            <strong>Phó Admin</strong> trường {school.short_name} hoặc tài khoản{" "}
+            <strong>GOD</strong> để tiếp tục.
+          </p>
+          <div className="flex justify-center pt-2">
+            <AuthButtonClient
+              userEmail={auth.email}
+              displayName={auth.displayName}
+              avatarUrl={auth.avatarUrl}
+              roleBadge={auth.roleBadge}
+              customRoles={auth.customRoles}
+              redirectPath={`/${school.slug}/admin`}
+            />
+          </div>
+          <a
+            href={`/${school.slug}`}
+            className="block text-xs font-bold text-[#0F766E] hover:underline pt-2"
+          >
+            ← Quay lại Căn tin {school.short_name}
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   const [
     { data: categories },
     { data: dishes },
@@ -90,9 +127,6 @@ export default async function SchoolAdminPage({
     ? school.sub_admin_emails
     : [];
 
-  // ==========================================================================
-  // SERVER ACTION: BỔ NHIỆM & GỠ QUYỀN PHÓ ADMIN (DO ADMIN TRƯỜNG BAN HÀNH)
-  // ==========================================================================
   async function addSubAdminAction(formData: FormData) {
     "use server";
     const email = String(formData.get("sub_email") ?? "")
@@ -151,9 +185,6 @@ export default async function SchoolAdminPage({
     revalidatePath("/admin/god");
   }
 
-  // ==========================================================================
-  // SERVER ACTION: QUÉT NHANH GOOGLE FORM
-  // ==========================================================================
   async function bulkImportFromFormAction(formData: FormData) {
     "use server";
     const rawText = String(formData.get("raw_text") ?? "").trim();
@@ -378,9 +409,6 @@ export default async function SchoolAdminPage({
     revalidatePath(`/${school.slug}`);
   }
 
-  // ==========================================================================
-  // SERVER ACTION 1: THÊM MÓN ĂN MỚI
-  // ==========================================================================
   async function addDishAction(formData: FormData) {
     "use server";
     const name = String(formData.get("name") ?? "").trim();
@@ -421,9 +449,6 @@ export default async function SchoolAdminPage({
     revalidatePath(`/${school.slug}`);
   }
 
-  // ==========================================================================
-  // SERVER ACTION MỚI: SỬA TRỰC TIẾP MÓN ĂN THEO ID (KHÔNG CẦN XÓA ĐĂNG LẠI)
-  // ==========================================================================
   async function updateDishAction(formData: FormData) {
     "use server";
     const dishId = String(formData.get("dish_id") ?? "").trim();
@@ -462,9 +487,6 @@ export default async function SchoolAdminPage({
     revalidatePath(`/${school.slug}`);
   }
 
-  // ==========================================================================
-  // SERVER ACTION 2: XÓA LẺ 1 MÓN ĂN
-  // ==========================================================================
   async function deleteDishAction(formData: FormData) {
     "use server";
     const dishId = String(formData.get("dish_id") ?? "");
@@ -600,7 +622,7 @@ export default async function SchoolAdminPage({
   ];
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-20">
+    <div className="min-h-screen bg-[#F4F7F9] text-slate-900 pb-20">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -616,23 +638,35 @@ export default async function SchoolAdminPage({
                 Quản lý Thực đơn & Đội ngũ — {school.short_name}
               </h1>
               <p className="text-[11px] text-slate-500">
-                Đường dẫn trường: foodhub.vn/{school.slug}
+                Mọi thao tác Lưu / Sửa / Quét Form đều cập nhật tức thì
               </p>
             </div>
           </div>
 
-          <a
-            href="/admin/god"
-            className="inline-flex items-center gap-1.5 text-xs font-bold bg-[#F59E0B] text-slate-950 px-3 py-2 rounded-xl hover:bg-[#F59E0B]/90 transition"
-          >
-            <Crown className="w-3.5 h-3.5" />
-            <span>GOD Mode</span>
-          </a>
+          <div className="flex items-center gap-2">
+            {auth.isGod && (
+              <a
+                href="/admin/god"
+                className="inline-flex items-center gap-1.5 text-xs font-bold bg-[#F59E0B] text-slate-950 px-3 py-2 rounded-xl hover:bg-[#F59E0B]/90 transition"
+              >
+                <Crown className="w-3.5 h-3.5" />
+                <span>GOD Mode</span>
+              </a>
+            )}
+            <AuthButtonClient
+              userEmail={auth.email}
+              displayName={auth.displayName}
+              avatarUrl={auth.avatarUrl}
+              roleBadge={auth.roleBadge}
+              customRoles={auth.customRoles}
+              redirectPath={`/${school.slug}/admin`}
+            />
+          </div>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-4 pt-6 space-y-8">
-        {/* KHU VỰC ĐỘI NGŨ ADMIN & BỔ NHIỆM PHÓ ADMIN (DO ADMIN TRƯỜNG BAN HÀNH) */}
+        {/* KHU VỰC ĐỘI NGŨ ADMIN & BỔ NHIỆM PHÓ ADMIN */}
         <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-2xs">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-2.5">
@@ -652,7 +686,6 @@ export default async function SchoolAdminPage({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-            {/* Cột 1: Danh sách Admin chính & Phó Admin hiện tại */}
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-3">
               <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                 <span className="font-bold text-slate-600">
@@ -680,16 +713,25 @@ export default async function SchoolAdminPage({
                         className="inline-flex items-center gap-1.5 bg-white border border-slate-200 px-2.5 py-1 rounded-xl font-semibold text-slate-800"
                       >
                         <span>{email}</span>
-                        <form action={removeSubAdminAction}>
-                          <input type="hidden" name="sub_email" value={email} />
-                          <button
-                            type="submit"
-                            title="Gỡ quyền Phó Admin"
-                            className="text-slate-400 hover:text-red-600 cursor-pointer"
+                        {auth.isMainSchoolAdmin && (
+                          <InstantActionForm
+                            action={removeSubAdminAction}
+                            successMessage={`Đã gỡ quyền Phó Admin của ${email}`}
                           >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </form>
+                            <input
+                              type="hidden"
+                              name="sub_email"
+                              value={email}
+                            />
+                            <button
+                              type="submit"
+                              title="Gỡ quyền Phó Admin"
+                              className="text-slate-400 hover:text-red-600 cursor-pointer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </InstantActionForm>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -697,36 +739,41 @@ export default async function SchoolAdminPage({
               </div>
             </div>
 
-            {/* Cột 2: Form cấp quyền Phó Admin */}
-            <form
-              action={addSubAdminAction}
-              className="p-4 rounded-2xl bg-indigo-50/40 border border-indigo-200/80 flex flex-col justify-between gap-3"
-            >
-              <div className="space-y-2">
-                <div className="flex items-center gap-1.5 font-extrabold text-indigo-950">
-                  <UserPlus className="w-4 h-4 text-indigo-600" />
-                  <span>Bổ nhiệm Phó Admin mới cho trường {school.short_name}</span>
-                </div>
-                <p className="text-[11px] text-slate-600">
-                  Phó Admin có quyền thêm/sửa món ăn, quét Google Form và xếp
-                  lịch tuần ngang với Admin chính.
-                </p>
-                <input
-                  name="sub_email"
-                  type="email"
-                  required
-                  placeholder="Nhập Gmail bạn phụ việc (VD: phoadmin@gmail.com)"
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-semibold"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition cursor-pointer"
+            {auth.isMainSchoolAdmin && (
+              <InstantActionForm
+                action={addSubAdminAction}
+                resetOnSuccess
+                successMessage="Đã bổ nhiệm Phó Admin mới thành công!"
+                className="p-4 rounded-2xl bg-indigo-50/40 border border-indigo-200/80 flex flex-col justify-between gap-3"
               >
-                + Cấp quyền Phó Admin
-              </button>
-            </form>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5 font-extrabold text-indigo-950">
+                    <UserPlus className="w-4 h-4 text-indigo-600" />
+                    <span>
+                      Bổ nhiệm Phó Admin mới cho trường {school.short_name}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600">
+                    Phó Admin có quyền thêm/sửa món ăn, quét Google Form và xếp
+                    lịch tuần ngang với Admin chính.
+                  </p>
+                  <input
+                    name="sub_email"
+                    type="email"
+                    required
+                    placeholder="Nhập Gmail bạn phụ việc (VD: phoadmin@gmail.com)"
+                    className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-semibold"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition cursor-pointer"
+                >
+                  + Cấp quyền Phó Admin
+                </button>
+              </InstantActionForm>
+            )}
           </div>
         </section>
 
@@ -750,8 +797,10 @@ export default async function SchoolAdminPage({
             </div>
           </div>
 
-          <form
+          <InstantActionForm
             action={bulkImportFromFormAction}
+            resetOnSuccess
+            successMessage="⚡ Đã quét Google Form & xếp lịch tuần thành công!"
             className="space-y-4 text-xs text-slate-900"
           >
             <textarea
@@ -839,7 +888,7 @@ export default async function SchoolAdminPage({
                 <span>Quét & Tự Động Thêm Toàn Bộ Món</span>
               </button>
             </div>
-          </form>
+          </InstantActionForm>
         </section>
 
         {/* KHU VỰC 1: THÊM MÓN ĂN MỚI */}
@@ -860,8 +909,10 @@ export default async function SchoolAdminPage({
             </div>
           </div>
 
-          <form
+          <InstantActionForm
             action={addDishAction}
+            resetOnSuccess
+            successMessage="🍱 Đã thêm món ăn mới vào kho thành công!"
             className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 text-xs"
           >
             <div className="sm:col-span-2">
@@ -941,7 +992,7 @@ export default async function SchoolAdminPage({
                 + Lưu Món & Hình Ảnh
               </button>
             </div>
-          </form>
+          </InstantActionForm>
         </section>
 
         {/* KHU VỰC 2: BẢNG CHỈNH SỬA 4 MÓN / NGÀY */}
@@ -961,9 +1012,10 @@ export default async function SchoolAdminPage({
             </div>
           </div>
 
-          <form
+          <InstantActionForm
             key={activeWeeklyMenu?.id ?? "weekly-form"}
             action={saveWeeklyMenuAction}
+            successMessage="📅 Đã lưu & phát hành Thực đơn Tuần mới thành công!"
             className="space-y-5 text-xs"
           >
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 bg-slate-50 p-4 rounded-2xl border border-slate-200/80">
@@ -1077,10 +1129,10 @@ export default async function SchoolAdminPage({
               <Sparkles className="w-4 h-4 text-[#F59E0B]" />
               <span>Lưu & Phát hành Thực Đơn Tuần Này</span>
             </button>
-          </form>
+          </InstantActionForm>
         </section>
 
-        {/* KHU VỰC 3: KHO MÓN ĂN HIỆN CÓ (ĐÃ CÓ NÚT SỬA MÓN TRỰC TIẾP) */}
+        {/* KHU VỰC 3: KHO MÓN ĂN HIỆN CÓ */}
         <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-2xs">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-2">
@@ -1092,13 +1144,17 @@ export default async function SchoolAdminPage({
                 </h2>
                 <p className="text-xs text-slate-500">
                   Bấm <strong>&ldquo;Sửa món&rdquo;</strong> ở bất kỳ món nào để
-                  đổi tên, đổi giá, sửa mô tả hoặc dán hình ảnh mới
+                  đổi tên, đổi giá, sửa mô tả hoặc dán hình ảnh mới (cập nhật
+                  ngay lập tức)
                 </p>
               </div>
             </div>
 
             {(dishes ?? []).length > 0 && (
-              <form action={deleteAllSchoolDishesAction}>
+              <InstantActionForm
+                action={deleteAllSchoolDishesAction}
+                successMessage="🗑️ Đã xóa sạch toàn bộ món ăn trong kho!"
+              >
                 <button
                   type="submit"
                   className="inline-flex items-center gap-1.5 text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 px-3.5 py-2 rounded-xl transition cursor-pointer"
@@ -1106,7 +1162,7 @@ export default async function SchoolAdminPage({
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>Xóa sạch toàn bộ ({(dishes ?? []).length} món)</span>
                 </button>
-              </form>
+              </InstantActionForm>
             )}
           </div>
 

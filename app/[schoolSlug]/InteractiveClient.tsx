@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import {
   Star,
   Heart,
@@ -21,8 +22,8 @@ import {
   Crown,
   ShieldAlert,
   Undo2,
-  User,
 } from "lucide-react";
+import { createBrowserSupabaseClient } from "@/app/lib/supabase/client";
 
 export interface CurrentUserClientInfo {
   email: string | null;
@@ -137,7 +138,6 @@ function UserIdentityBadge({
           {finalName}
         </span>
 
-        {/* Huy hiệu chức vụ hệ thống */}
         {isGodUser ? (
           <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
             👑 GOD
@@ -149,7 +149,6 @@ function UserIdentityBadge({
           </span>
         ) : null}
 
-        {/* Các Role Danh Hiệu màu sắc (Thực thần, Thánh ăn...) */}
         {customRoles.map((r) => (
           <span
             key={r.id}
@@ -161,7 +160,6 @@ function UserIdentityBadge({
         ))}
       </button>
 
-      {/* POPUP XEM HỒ SƠ CÁ NHÂN KHI BẤM VÀO TÊN / AVATAR */}
       {openProfileModal && (
         <div
           onClick={(e) => {
@@ -174,7 +172,6 @@ function UserIdentityBadge({
             onClick={(e) => e.stopPropagation()}
             className="bg-white rounded-3xl border border-slate-200 max-w-sm w-full overflow-hidden shadow-2xl text-xs animate-in fade-in zoom-in-95 duration-150"
           >
-            {/* Banner đầu thẻ Profile */}
             <div className="h-24 bg-gradient-to-r from-slate-900 via-teal-900 to-[#0F766E] relative">
               <button
                 type="button"
@@ -215,7 +212,6 @@ function UserIdentityBadge({
                 </p>
               </div>
 
-              {/* Tiểu sử (Bio) */}
               <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-slate-700 leading-relaxed">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                   Giới thiệu bản thân
@@ -223,7 +219,6 @@ function UserIdentityBadge({
                 <p>&ldquo;{finalBio}&rdquo;</p>
               </div>
 
-              {/* Danh sách Role & Danh hiệu đang sở hữu */}
               <div className="space-y-2">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   Chức vụ & Role Danh Hiệu
@@ -266,8 +261,17 @@ function UserIdentityBadge({
 }
 
 // ============================================================================
-// 1. LƯỚI THẺ MÓN ĂN + POPUP ĐÁNH GIÁ
+// 1. LƯỚI THẺ MÓN ĂN + CHẤM SAO CẬP NHẬT TỨC THÌ (KHÔNG CẦN RELOAD)
 // ============================================================================
+function calcTierFromAvg(count: number, avg: number | null) {
+  if (!count || !avg) return "NEW";
+  if (avg >= 4.5) return "S";
+  if (avg >= 4.0) return "A";
+  if (avg >= 3.0) return "B";
+  if (avg >= 2.0) return "C";
+  return "D";
+}
+
 export function CompactDishGrid({
   dishes,
   reviewsByDish,
@@ -283,13 +287,26 @@ export function CompactDishGrid({
   onUpsertReview: (formData: FormData) => Promise<void>;
   onDeleteReview: (formData: FormData) => Promise<void>;
 }) {
-  const [selectedDish, setSelectedDish] = useState<any | null>(null);
+  const router = useRouter();
+  const [localDishes, setLocalDishes] = useState<any[]>(dishes);
+  const [localReviewsMap, setLocalReviewsMap] =
+    useState<Record<string, any[]>>(reviewsByDish);
+
+  const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   const [reviewerKey, setReviewerKey] = useState<string>("");
   const [rating, setRating] = useState<number>(5);
   const [selectedTag, setSelectedTag] = useState<string>("#ĐậmĐà");
   const [reviewerName, setReviewerName] = useState<string>("");
   const [body, setBody] = useState<string>("");
   const [likedMap, setLikedMap] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setLocalDishes(dishes);
+  }, [dishes]);
+
+  useEffect(() => {
+    setLocalReviewsMap(reviewsByDish);
+  }, [reviewsByDish]);
 
   useEffect(() => {
     const key = getOrCreateReviewerKey(currentUser.email);
@@ -302,9 +319,11 @@ export function CompactDishGrid({
     }
   }, [currentUser.email, currentUser.displayName]);
 
+  const selectedDish = localDishes.find((d) => d.id === selectedDishId) || null;
+
   const openDishModal = (dish: any) => {
-    setSelectedDish(dish);
-    const dishReviews = reviewsByDish[dish.id] || [];
+    setSelectedDishId(dish.id);
+    const dishReviews = localReviewsMap[dish.id] || [];
     const myExisting = dishReviews.find(
       (r) =>
         r.reviewer_key === reviewerKey ||
@@ -322,6 +341,103 @@ export function CompactDishGrid({
       setBody("");
       setSelectedTag("#ĐậmĐà");
     }
+  };
+
+  // Cập nhật lại điểm sao & Tier của món ăn ngay lập tức trên giao diện
+  const syncDishStatsInState = (dishId: string, updatedList: any[]) => {
+    const count = updatedList.length;
+    const avg =
+      count > 0
+        ? Math.round(
+            (updatedList.reduce((acc, r) => acc + Number(r.rating || 0), 0) /
+              count) *
+              10
+          ) / 10
+        : null;
+    const newTier = calcTierFromAvg(count, avg);
+
+    setLocalDishes((prev) =>
+      prev.map((d) =>
+        d.id === dishId
+          ? {
+              ...d,
+              review_count: count,
+              average_rating: avg,
+              dish_tier: newTier,
+            }
+          : d
+      )
+    );
+  };
+
+  const handleReviewSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedDish) return;
+
+    const fd = new FormData(e.currentTarget);
+    if (!currentUser.email && reviewerName) {
+      localStorage.setItem("foodhub_student_name", reviewerName);
+    }
+
+    const effectiveKey = currentUser.email
+      ? `google_${currentUser.email}`
+      : reviewerKey;
+    const effectiveName =
+      currentUser.displayName || reviewerName || "Học sinh";
+
+    const optimisticReview = {
+      id: "temp_" + Date.now(),
+      dish_id: selectedDish.id,
+      reviewer_key: effectiveKey,
+      reviewer_name: effectiveName,
+      reviewer_email: currentUser.email,
+      reviewer_avatar: currentUser.avatarUrl,
+      reviewer_badge: currentUser.roleBadge,
+      rating,
+      body: body.trim() || null,
+      tags: [selectedTag],
+      created_at: new Date().toISOString(),
+    };
+
+    const existingList = localReviewsMap[selectedDish.id] || [];
+    const filtered = existingList.filter(
+      (r) =>
+        r.reviewer_key !== effectiveKey &&
+        !(currentUser.email && r.reviewer_email === currentUser.email)
+    );
+    const nextList = [optimisticReview, ...filtered];
+
+    setLocalReviewsMap((prev) => ({
+      ...prev,
+      [selectedDish.id]: nextList,
+    }));
+    syncDishStatsInState(selectedDish.id, nextList);
+
+    // Chạy lưu Database ngầm và làm mới dữ liệu Server
+    await onUpsertReview(fd);
+    router.refresh();
+  };
+
+  const handleReviewDelete = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedDish) return;
+    const fd = new FormData(e.currentTarget);
+
+    const existingList = localReviewsMap[selectedDish.id] || [];
+    const nextList = existingList.filter(
+      (r) =>
+        r.reviewer_key !== reviewerKey &&
+        !(currentUser.email && r.reviewer_email === currentUser.email)
+    );
+
+    setLocalReviewsMap((prev) => ({
+      ...prev,
+      [selectedDish.id]: nextList,
+    }));
+    syncDishStatsInState(selectedDish.id, nextList);
+
+    await onDeleteReview(fd);
+    router.refresh();
   };
 
   const quickTags = [
@@ -351,7 +467,7 @@ export function CompactDishGrid({
   };
 
   const currentDishReviews = selectedDish
-    ? reviewsByDish[selectedDish.id] || []
+    ? localReviewsMap[selectedDish.id] || []
     : [];
   const myReview = currentDishReviews.find(
     (r) =>
@@ -362,7 +478,7 @@ export function CompactDishGrid({
   return (
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 items-start">
-        {dishes.map((dish) => {
+        {localDishes.map((dish) => {
           const isLiked = !!likedMap[dish.id];
           return (
             <div
@@ -453,7 +569,7 @@ export function CompactDishGrid({
 
       {selectedDish && (
         <div
-          onClick={() => setSelectedDish(null)}
+          onClick={() => setSelectedDishId(null)}
           className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
         >
           <div
@@ -483,7 +599,7 @@ export function CompactDishGrid({
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedDish(null)}
+                onClick={() => setSelectedDishId(null)}
                 className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
               >
                 <X className="w-4 h-4" />
@@ -514,7 +630,6 @@ export function CompactDishGrid({
               </p>
             </div>
 
-            {/* Khung chấm sao */}
             <div className="rounded-2xl border-2 border-teal-600/20 bg-teal-50/30 p-4 space-y-3 text-xs">
               <div className="flex items-center justify-between">
                 <span className="font-extrabold text-slate-900 text-sm">
@@ -524,12 +639,7 @@ export function CompactDishGrid({
                 </span>
 
                 {myReview && (
-                  <form
-                    action={async (fd) => {
-                      await onDeleteReview(fd);
-                      setSelectedDish(null);
-                    }}
-                  >
+                  <form onSubmit={handleReviewDelete}>
                     <input
                       type="hidden"
                       name="dish_id"
@@ -551,16 +661,7 @@ export function CompactDishGrid({
                 )}
               </div>
 
-              <form
-                action={async (fd) => {
-                  if (!currentUser.email && reviewerName) {
-                    localStorage.setItem("foodhub_student_name", reviewerName);
-                  }
-                  await onUpsertReview(fd);
-                  setSelectedDish(null);
-                }}
-                className="space-y-3"
-              >
+              <form onSubmit={handleReviewSubmit} className="space-y-3">
                 <input type="hidden" name="dish_id" value={selectedDish.id} />
                 <input type="hidden" name="reviewer_key" value={reviewerKey} />
                 <input type="hidden" name="rating" value={rating} />
@@ -657,7 +758,7 @@ export function CompactDishGrid({
                   <Edit3 className="w-3.5 h-3.5" />
                   <span>
                     {myReview
-                      ? `Cập nhật lại đánh giá (${rating}⭐)`
+                      ? `Cập nhật ngay (${rating}⭐)`
                       : `Gửi đánh giá (${rating}⭐)`}
                   </span>
                 </button>
@@ -715,7 +816,7 @@ export function CompactDishGrid({
 }
 
 // ============================================================================
-// 2. SÀN ĐỔI PHIẾU ĂN THÔNG MINH 2 CHIỀU
+// 2. SÀN ĐỔI PHIẾU ĂN THÔNG MINH 2 CHIỀU (CẬP NHẬT TỨC THÌ 0 GIÂY)
 // ============================================================================
 export function SmartTicketSwapBoard({
   weeklyItems,
@@ -734,6 +835,9 @@ export function SmartTicketSwapBoard({
   onReopenSwap: (formData: FormData) => Promise<void>;
   onDeleteSwap: (formData: FormData) => Promise<void>;
 }) {
+  const router = useRouter();
+  const [localSwaps, setLocalSwaps] = useState<any[]>(swaps);
+
   const [selectedDay, setSelectedDay] = useState<number>(() => {
     const jsDay = new Date().getDay();
     return jsDay >= 1 && jsDay <= 5 ? jsDay : 1;
@@ -741,7 +845,12 @@ export function SmartTicketSwapBoard({
 
   const [haveSlot, setHaveSlot] = useState<number>(1);
   const [wantSlot, setWantSlot] = useState<number>(2);
+  const [contactNote, setContactNote] = useState<string>("");
   const [acceptingSwapId, setAcceptingSwapId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalSwaps(swaps);
+  }, [swaps]);
 
   const daysTabs = [
     { day: 1, label: "Thứ 2" },
@@ -758,6 +867,101 @@ export function SmartTicketSwapBoard({
   const getSlotDishName = (slotNum: number) => {
     const found = dayMenu.find((i) => Number(i.slot_number) === slotNum);
     return found ? found.dish_name : `Món số ${slotNum}`;
+  };
+
+  const handleCreateSwapSubmit = async (
+    e: React.FormEvent<HTMLFormElement>
+  ) => {
+    e.preventDefault();
+    if (haveSlot === wantSlot) return;
+    const fd = new FormData(e.currentTarget);
+
+    const creatorName =
+      String(fd.get("student_name") ?? "").trim() ||
+      currentUser?.displayName ||
+      "Học sinh";
+
+    const optimisticSwap = {
+      id: "temp_swap_" + Date.now(),
+      creator_name: creatorName,
+      day_of_week: selectedDay,
+      have_slot: haveSlot,
+      want_slot: wantSlot,
+      have_dish_name: getSlotDishName(haveSlot),
+      want_dish_name: getSlotDishName(wantSlot),
+      contact_note: contactNote,
+      status: "open",
+    };
+
+    setLocalSwaps((prev) => [optimisticSwap, ...prev]);
+    setContactNote("");
+
+    await onCreateSwap(fd);
+    router.refresh();
+  };
+
+  const handleAcceptSwapSubmit = async (
+    e: React.FormEvent<HTMLFormElement>,
+    swapId: string
+  ) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const accepterName = String(fd.get("accepter_name") ?? "Học sinh").trim();
+    const counterLoc = String(fd.get("counter_location") ?? "").trim();
+
+    setLocalSwaps((prev) =>
+      prev.map((s) =>
+        s.id === swapId
+          ? {
+              ...s,
+              status: "completed",
+              accepter_name: accepterName,
+              counter_location: counterLoc || null,
+            }
+          : s
+      )
+    );
+    setAcceptingSwapId(null);
+
+    await onAcceptSwap(fd);
+    router.refresh();
+  };
+
+  const handleReopenSwapSubmit = async (
+    e: React.FormEvent<HTMLFormElement>,
+    swapId: string
+  ) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+
+    setLocalSwaps((prev) =>
+      prev.map((s) =>
+        s.id === swapId
+          ? {
+              ...s,
+              status: "open",
+              accepter_name: null,
+              counter_location: null,
+            }
+          : s
+      )
+    );
+
+    await onReopenSwap(fd);
+    router.refresh();
+  };
+
+  const handleDeleteSwapSubmit = async (
+    e: React.FormEvent<HTMLFormElement>,
+    swapId: string
+  ) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+
+    setLocalSwaps((prev) => prev.filter((s) => s.id !== swapId));
+
+    await onDeleteSwap(fd);
+    router.refresh();
   };
 
   return (
@@ -785,7 +989,7 @@ export function SmartTicketSwapBoard({
       </div>
 
       <form
-        action={onCreateSwap}
+        onSubmit={handleCreateSwapSubmit}
         className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 bg-teal-50/40 p-4 rounded-2xl border border-teal-200"
       >
         <input type="hidden" name="day_of_week" value={selectedDay} />
@@ -857,6 +1061,8 @@ export function SmartTicketSwapBoard({
             <input
               name="contact_note"
               required
+              value={contactNote}
+              onChange={(e) => setContactNote(e.target.value)}
               placeholder="VD: 11h30 cầu thang dãy B"
               className="w-full p-2.5 bg-white border border-slate-200 rounded-xl"
             />
@@ -871,13 +1077,13 @@ export function SmartTicketSwapBoard({
         </div>
       </form>
 
-      {swaps.length === 0 ? (
+      {localSwaps.length === 0 ? (
         <p className="text-xs text-slate-500 py-3 text-center">
           Hiện chưa có đơn đổi phiếu ăn nào đang mở.
         </p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-          {swaps.map((sw: any) => {
+          {localSwaps.map((sw: any) => {
             const isMatched = sw.status === "completed";
             const isAcceptBoxOpen = acceptingSwapId === sw.id;
             const dayNumber = Number(sw.day_of_week || 1) + 1;
@@ -914,7 +1120,9 @@ export function SmartTicketSwapBoard({
                     </p>
                   </div>
 
-                  <form action={onDeleteSwap}>
+                  <form
+                    onSubmit={(e) => handleDeleteSwapSubmit(e, sw.id)}
+                  >
                     <input type="hidden" name="swap_id" value={sw.id} />
                     <button
                       type="submit"
@@ -974,10 +1182,7 @@ export function SmartTicketSwapBoard({
 
                     {isAcceptBoxOpen && (
                       <form
-                        action={async (fd) => {
-                          await onAcceptSwap(fd);
-                          setAcceptingSwapId(null);
-                        }}
+                        onSubmit={(e) => handleAcceptSwapSubmit(e, sw.id)}
                         className="p-3 rounded-xl bg-teal-50/70 border border-teal-200 space-y-2.5"
                       >
                         <input type="hidden" name="swap_id" value={sw.id} />
@@ -1017,7 +1222,10 @@ export function SmartTicketSwapBoard({
                     )}
                   </div>
                 ) : (
-                  <form action={onReopenSwap} className="flex justify-end">
+                  <form
+                    onSubmit={(e) => handleReopenSwapSubmit(e, sw.id)}
+                    className="flex justify-end"
+                  >
                     <input type="hidden" name="swap_id" value={sw.id} />
                     <button
                       type="submit"
@@ -1075,7 +1283,7 @@ export function CopyWeeklyPicksButton({
 }
 
 // ============================================================================
-// 4. DIỄN ĐÀN (FORUM): BẤM VÀO TÊN XEM PROFILE + EMOJI + TRẢ LỜI + HOÀNG ĐẾ XÓA SỔ
+// 4. DIỄN ĐÀN (FORUM): CẬP NHẬT TỨC THÌ 0ms + REALTIME SUPABASE
 // ============================================================================
 const EMOJI_LIST = ["❤️", "😂", "🔥", "🤤", "😢"];
 
@@ -1100,15 +1308,57 @@ export function ForumSectionClient({
   onDeleteComment: (formData: FormData) => Promise<void>;
   onReactItem: (formData: FormData) => Promise<void>;
 }) {
+  const router = useRouter();
+  const [localPosts, setLocalPosts] = useState<any[]>(posts);
+  const [localCommentsMap, setLocalCommentsMap] =
+    useState<Record<string, any[]>>(commentsByPost);
+
+  const [postTitle, setPostTitle] = useState("");
+  const [postBody, setPostBody] = useState("");
+  const [guestAuthor, setGuestAuthor] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [uploading, setUploading] = useState(false);
+
   const [openCommentPostId, setOpenCommentPostId] = useState<string | null>(
     posts[0]?.id ?? null
   );
   const [replyingToMap, setReplyingToMap] = useState<Record<string, string>>(
     {}
   );
+  const [commentInputMap, setCommentInputMap] = useState<
+    Record<string, string>
+  >({});
   const commentInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    setLocalPosts(posts);
+  }, [posts]);
+
+  useEffect(() => {
+    setLocalCommentsMap(commentsByPost);
+  }, [commentsByPost]);
+
+  // Tự động lắng nghe Realtime từ Supabase để đồng bộ khi người khác nhắn tin
+  useEffect(() => {
+    const supabase = createBrowserSupabaseClient();
+    const channel = supabase
+      .channel("foodhub_forum_realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "forum_posts" },
+        () => router.refresh()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "forum_comments" },
+        () => router.refresh()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [router]);
 
   const handleUploadFile = async (file: File) => {
     if (!file.type.startsWith("image/")) return;
@@ -1161,14 +1411,169 @@ export function ForumSectionClient({
     }, 50);
   };
 
+  // 1. Đăng bài Forum: Hiện ngay lập tức không chờ reload
+  const handleCreatePostSubmit = async (
+    e: React.FormEvent<HTMLFormElement>
+  ) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+
+    const tempId = "temp_post_" + Date.now();
+    const optimisticPost = {
+      id: tempId,
+      author_name: currentUser.displayName || guestAuthor || "Học sinh",
+      author_email: currentUser.email,
+      author_avatar: currentUser.avatarUrl,
+      author_badge: currentUser.roleBadge,
+      title: postTitle,
+      body: postBody,
+      image_url: imageUrl || null,
+      reactions: {},
+      created_at: new Date().toISOString(),
+    };
+
+    setLocalPosts((prev) => [optimisticPost, ...prev]);
+    setOpenCommentPostId(tempId);
+    setPostTitle("");
+    setPostBody("");
+    setImageUrl("");
+
+    await onCreatePost(fd);
+    router.refresh();
+  };
+
+  // 2. Xóa bài Forum: Biến mất ngay lập tức
+  const handleDeletePostSubmit = async (
+    e: React.FormEvent<HTMLFormElement>,
+    postId: string
+  ) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+
+    setLocalPosts((prev) => prev.filter((p) => p.id !== postId));
+
+    await onDeletePost(fd);
+    router.refresh();
+  };
+
+  // 3. Gửi tin nhắn chat trong Forum: Hiện ngay lập tức
+  const handleCreateCommentSubmit = async (
+    e: React.FormEvent<HTMLFormElement>,
+    postId: string
+  ) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const bodyText = (commentInputMap[postId] || "").trim();
+    if (!bodyText) return;
+
+    const replyTarget = replyingToMap[postId] || "";
+    const guestName = String(fd.get("author_name") ?? "").trim();
+
+    const optimisticComment = {
+      id: "temp_cmt_" + Date.now(),
+      post_id: postId,
+      author_name: currentUser.displayName || guestName || "Học sinh",
+      author_email: currentUser.email,
+      author_avatar: currentUser.avatarUrl,
+      author_badge: currentUser.roleBadge,
+      reply_to_name: replyTarget || null,
+      body: bodyText,
+      reactions: {},
+      deleted_by_role: null,
+      created_at: new Date().toISOString(),
+    };
+
+    setLocalCommentsMap((prev) => ({
+      ...prev,
+      [postId]: [...(prev[postId] || []), optimisticComment],
+    }));
+    setCommentInputMap((prev) => ({ ...prev, [postId]: "" }));
+    setReplyingToMap((prev) => ({ ...prev, [postId]: "" }));
+
+    await onCreateComment(fd);
+    router.refresh();
+  };
+
+  // 4. Xóa / Thu hồi tin nhắn: Hiện bảng "Hoàng Đế xóa sổ" ngay lập tức
+  const handleDeleteCommentSubmit = async (
+    e: React.FormEvent<HTMLFormElement>,
+    postId: string,
+    comment: any
+  ) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+
+    const isOwner = Boolean(
+      currentUser.email &&
+        comment.author_email &&
+        currentUser.email === comment.author_email.toLowerCase().trim()
+    );
+
+    let roleResult = "self";
+    if (currentUser.isGod) {
+      roleResult = "god";
+    } else if (currentUser.canManageSchool && !isOwner) {
+      roleResult = "admin";
+    }
+
+    setLocalCommentsMap((prev) => ({
+      ...prev,
+      [postId]: (prev[postId] || []).map((c) =>
+        c.id === comment.id ? { ...c, deleted_by_role: roleResult } : c
+      ),
+    }));
+
+    await onDeleteComment(fd);
+    router.refresh();
+  };
+
+  // 5. Thả Emoji: Tăng số đếm ngay lập tức trong 0.01s
+  const handleInstantReaction = async (
+    targetType: "post" | "comment",
+    targetId: string,
+    emoji: string,
+    postId?: string
+  ) => {
+    if (targetType === "post") {
+      setLocalPosts((prev) =>
+        prev.map((p) => {
+          if (p.id !== targetId) return p;
+          const cur =
+            p.reactions && typeof p.reactions === "object" ? p.reactions : {};
+          return {
+            ...p,
+            reactions: { ...cur, [emoji]: Number(cur[emoji] || 0) + 1 },
+          };
+        })
+      );
+    } else if (postId) {
+      setLocalCommentsMap((prev) => ({
+        ...prev,
+        [postId]: (prev[postId] || []).map((c) => {
+          if (c.id !== targetId) return c;
+          const cur =
+            c.reactions && typeof c.reactions === "object" ? c.reactions : {};
+          return {
+            ...c,
+            reactions: { ...cur, [emoji]: Number(cur[emoji] || 0) + 1 },
+          };
+        }),
+      }));
+    }
+
+    const fd = new FormData();
+    fd.set("target_type", targetType);
+    fd.set("target_id", targetId);
+    fd.set("emoji", emoji);
+    await onReactItem(fd);
+    router.refresh();
+  };
+
   return (
     <div className="space-y-5">
       {/* KHUNG ĐĂNG BÀI VIẾT FORUM MỚI */}
       <form
-        action={async (fd) => {
-          await onCreatePost(fd);
-          setImageUrl("");
-        }}
+        onSubmit={handleCreatePostSubmit}
         onPaste={handlePasteImage}
         className="bg-slate-50 rounded-3xl border border-slate-200 p-4 sm:p-5 space-y-3.5 text-xs"
       >
@@ -1201,6 +1606,8 @@ export function ForumSectionClient({
           <input
             name="title"
             required
+            value={postTitle}
+            onChange={(e) => setPostTitle(e.target.value)}
             placeholder="Tiêu đề chủ đề (VD: Hôm nay món số 2 có ngon không mọi người?)"
             className="w-full p-3 bg-white border border-slate-200 rounded-2xl font-bold text-slate-900"
           />
@@ -1209,12 +1616,16 @@ export function ForumSectionClient({
             <input
               name="author_name"
               required
+              value={guestAuthor}
+              onChange={(e) => setGuestAuthor(e.target.value)}
               placeholder="Tên / Biệt danh của bạn *"
               className="p-3 bg-white border border-slate-200 rounded-2xl font-semibold"
             />
             <input
               name="title"
               required
+              value={postTitle}
+              onChange={(e) => setPostTitle(e.target.value)}
               placeholder="Tiêu đề chủ đề thảo luận *"
               className="sm:col-span-2 p-3 bg-white border border-slate-200 rounded-2xl font-bold"
             />
@@ -1225,6 +1636,8 @@ export function ForumSectionClient({
           name="body"
           required
           rows={2}
+          value={postBody}
+          onChange={(e) => setPostBody(e.target.value)}
           placeholder="Nhập nội dung thảo luận hoặc bấm Ctrl + V để dán ảnh khay cơm vào đây..."
           className="w-full p-3 bg-white border border-slate-200 rounded-2xl"
         />
@@ -1281,13 +1694,13 @@ export function ForumSectionClient({
 
       {/* DANH SÁCH CÁC CHỦ ĐỀ FORUM */}
       <div className="space-y-4">
-        {posts.length === 0 ? (
+        {localPosts.length === 0 ? (
           <p className="text-xs text-slate-400 text-center py-6">
             Chưa có bài thảo luận nào. Hãy mở màn cuộc trò chuyện đầu tiên nhé!
           </p>
         ) : (
-          posts.map((post: any) => {
-            const comments = commentsByPost[post.id] || [];
+          localPosts.map((post: any) => {
+            const comments = localCommentsMap[post.id] || [];
             const isOpen = openCommentPostId === post.id;
             const postReactions: Record<string, number> =
               post.reactions && typeof post.reactions === "object"
@@ -1325,7 +1738,9 @@ export function ForumSectionClient({
                   </div>
 
                   {canDeleteThisPost && (
-                    <form action={onDeletePost}>
+                    <form
+                      onSubmit={(e) => handleDeletePostSubmit(e, post.id)}
+                    >
                       <input type="hidden" name="post_id" value={post.id} />
                       <button
                         type="submit"
@@ -1356,26 +1771,21 @@ export function ForumSectionClient({
                     {EMOJI_LIST.map((emoji) => {
                       const count = Number(postReactions[emoji] || 0);
                       return (
-                        <form key={emoji} action={onReactItem}>
-                          <input type="hidden" name="target_type" value="post" />
-                          <input
-                            type="hidden"
-                            name="target_id"
-                            value={post.id}
-                          />
-                          <input type="hidden" name="emoji" value={emoji} />
-                          <button
-                            type="submit"
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border transition cursor-pointer hover:scale-105 ${
-                              count > 0
-                                ? "bg-teal-50 border-teal-200 text-[#0F766E]"
-                                : "bg-slate-50 border-slate-200/80 text-slate-500 hover:bg-slate-100"
-                            }`}
-                          >
-                            <span>{emoji}</span>
-                            {count > 0 && <span>{count}</span>}
-                          </button>
-                        </form>
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() =>
+                            handleInstantReaction("post", post.id, emoji)
+                          }
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border transition cursor-pointer hover:scale-105 active:scale-95 ${
+                            count > 0
+                              ? "bg-teal-50 border-teal-200 text-[#0F766E]"
+                              : "bg-slate-50 border-slate-200/80 text-slate-500 hover:bg-slate-100"
+                          }`}
+                        >
+                          <span>{emoji}</span>
+                          {count > 0 && <span>{count}</span>}
+                        </button>
                       );
                     })}
                   </div>
@@ -1463,7 +1873,15 @@ export function ForumSectionClient({
                                     </button>
 
                                     {canDeleteComment && (
-                                      <form action={onDeleteComment}>
+                                      <form
+                                        onSubmit={(e) =>
+                                          handleDeleteCommentSubmit(
+                                            e,
+                                            post.id,
+                                            c
+                                          )
+                                        }
+                                      >
                                         <input
                                           type="hidden"
                                           name="comment_id"
@@ -1523,34 +1941,26 @@ export function ForumSectionClient({
                                         commentReactions[emoji] || 0
                                       );
                                       return (
-                                        <form key={emoji} action={onReactItem}>
-                                          <input
-                                            type="hidden"
-                                            name="target_type"
-                                            value="comment"
-                                          />
-                                          <input
-                                            type="hidden"
-                                            name="target_id"
-                                            value={c.id}
-                                          />
-                                          <input
-                                            type="hidden"
-                                            name="emoji"
-                                            value={emoji}
-                                          />
-                                          <button
-                                            type="submit"
-                                            className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold border transition cursor-pointer ${
-                                              cnt > 0
-                                                ? "bg-teal-50 border-teal-200 text-[#0F766E]"
-                                                : "bg-slate-50 border-slate-200/60 text-slate-400 hover:text-slate-700"
-                                            }`}
-                                          >
-                                            <span>{emoji}</span>
-                                            {cnt > 0 && <span>{cnt}</span>}
-                                          </button>
-                                        </form>
+                                        <button
+                                          key={emoji}
+                                          type="button"
+                                          onClick={() =>
+                                            handleInstantReaction(
+                                              "comment",
+                                              c.id,
+                                              emoji,
+                                              post.id
+                                            )
+                                          }
+                                          className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold border transition cursor-pointer hover:scale-105 active:scale-95 ${
+                                            cnt > 0
+                                              ? "bg-teal-50 border-teal-200 text-[#0F766E]"
+                                              : "bg-slate-50 border-slate-200/60 text-slate-400 hover:text-slate-700"
+                                          }`}
+                                        >
+                                          <span>{emoji}</span>
+                                          {cnt > 0 && <span>{cnt}</span>}
+                                        </button>
                                       );
                                     })}
                                   </div>
@@ -1581,13 +1991,7 @@ export function ForumSectionClient({
                     )}
 
                     <form
-                      action={async (fd) => {
-                        await onCreateComment(fd);
-                        setReplyingToMap((prev) => ({
-                          ...prev,
-                          [post.id]: "",
-                        }));
-                      }}
+                      onSubmit={(e) => handleCreateCommentSubmit(e, post.id)}
                       className="flex flex-col sm:flex-row gap-2 pt-1"
                     >
                       <input type="hidden" name="post_id" value={post.id} />
@@ -1612,6 +2016,13 @@ export function ForumSectionClient({
                         }}
                         name="body"
                         required
+                        value={commentInputMap[post.id] || ""}
+                        onChange={(e) =>
+                          setCommentInputMap((prev) => ({
+                            ...prev,
+                            [post.id]: e.target.value,
+                          }))
+                        }
                         placeholder={
                           activeReplyTarget
                             ? `Nhắn trả lời @${activeReplyTarget}...`

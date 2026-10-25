@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   Image as ImageIcon,
   X,
@@ -8,6 +9,7 @@ import {
   Pencil,
   Trash2,
   Save,
+  Loader2,
 } from "lucide-react";
 
 function compressImageToDataUrl(file: File): Promise<string> {
@@ -44,7 +46,69 @@ function compressImageToDataUrl(file: File): Promise<string> {
   });
 }
 
-// 1. Ô dán ảnh Ctrl + V dùng cho cả Form Thêm mới và Form Chỉnh sửa
+// 1. Form Thông Minh dùng cho mọi thao tác Admin: Tự hiện thông báo nổi & Làm mới trang tức thì
+export function InstantActionForm({
+  action,
+  successMessage = "Đã lưu & cập nhật thành công!",
+  resetOnSuccess = false,
+  className = "",
+  children,
+}: {
+  action: (formData: FormData) => Promise<void>;
+  successMessage?: string;
+  resetOnSuccess?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const router = useRouter();
+  const [submitting, setSubmitting] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formEl = e.currentTarget;
+    const fd = new FormData(formEl);
+
+    setSubmitting(true);
+    try {
+      await action(fd);
+      if (resetOnSuccess) {
+        formEl.reset();
+        window.dispatchEvent(new CustomEvent("foodhub:reset-image"));
+      }
+      setToast(successMessage);
+      router.refresh();
+      setTimeout(() => setToast(null), 3000);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      {toast && (
+        <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-xl border border-teal-500/40 flex items-center gap-2.5 text-xs font-extrabold animate-bounce">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toast}</span>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className={`relative ${className}`}>
+        {submitting && (
+          <div className="absolute inset-0 z-10 bg-white/60 backdrop-blur-[1px] rounded-2xl flex items-center justify-center">
+            <div className="bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-2 shadow-lg">
+              <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+              <span>Đang cập nhật ngay...</span>
+            </div>
+          </div>
+        )}
+        {children}
+      </form>
+    </>
+  );
+}
+
+// 2. Ô dán ảnh Ctrl + V
 export function DishImagePasteInput({
   defaultImage = "",
   inputName = "image_url",
@@ -54,6 +118,18 @@ export function DishImagePasteInput({
 }) {
   const [imageData, setImageData] = useState<string>(defaultImage);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setImageData(defaultImage);
+  }, [defaultImage]);
+
+  useEffect(() => {
+    const handleReset = () => {
+      if (!defaultImage) setImageData("");
+    };
+    window.addEventListener("foodhub:reset-image", handleReset);
+    return () => window.removeEventListener("foodhub:reset-image", handleReset);
+  }, [defaultImage]);
 
   const handleFile = async (file: File) => {
     if (!file.type.startsWith("image/")) return;
@@ -141,7 +217,7 @@ export function DishImagePasteInput({
   );
 }
 
-// 2. Dòng hiển thị món ăn trong Kho Món Ăn kèm nút "✏️ Sửa món" & Modal chỉnh sửa trực tiếp
+// 3. Dòng món ăn trong Kho Món Ăn: Sửa hoặc Xóa cập nhật ngay trong 0.01 giây + Hiện thông báo
 export function EditableDishRow({
   dish,
   categories,
@@ -153,16 +229,78 @@ export function EditableDishRow({
   onUpdateDish: (formData: FormData) => Promise<void>;
   onDeleteDish: (formData: FormData) => Promise<void>;
 }) {
+  const router = useRouter();
+  const [localDish, setLocalDish] = useState<any>(dish);
+  const [isDeleted, setIsDeleted] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalDish(dish);
+  }, [dish]);
+
+  if (isDeleted) return null;
+
+  const handleUpdateSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+
+    const newName = String(fd.get("name") ?? localDish.name).trim();
+    const newMealTime = String(fd.get("meal_time") ?? localDish.meal_time);
+    const newCatId = String(fd.get("category_id") ?? localDish.category_id);
+    const newPriceRaw = String(fd.get("price_vnd") ?? "").trim();
+    const newDesc = String(fd.get("description") ?? "").trim();
+    const newImg = String(fd.get("image_url") ?? "").trim();
+
+    const matchedCat = categories.find((c) => c.id === newCatId);
+
+    // Cập nhật giao diện tức thì không cần chờ Server
+    setLocalDish((prev: any) => ({
+      ...prev,
+      name: newName,
+      meal_time: newMealTime,
+      category_id: newCatId,
+      categories: matchedCat
+        ? { name: matchedCat.name, icon: matchedCat.icon }
+        : prev.categories,
+      price_vnd: newPriceRaw ? parseInt(newPriceRaw, 10) : null,
+      description: newDesc || null,
+      image_url: newImg || null,
+    }));
+
+    setIsEditing(false);
+    setToast(`✅ Đã cập nhật món "${newName}"!`);
+    setTimeout(() => setToast(null), 3000);
+
+    await onUpdateDish(fd);
+    router.refresh();
+  };
+
+  const handleDeleteSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+
+    // Ẩn món ăn khỏi danh sách ngay lập tức
+    setIsDeleted(true);
+    await onDeleteDish(fd);
+    router.refresh();
+  };
 
   return (
-    <div className="py-3.5 space-y-3">
+    <div className="py-3.5 space-y-3 relative">
+      {toast && (
+        <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-xl border border-teal-500/40 flex items-center gap-2.5 text-xs font-extrabold animate-bounce">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toast}</span>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          {dish.image_url ? (
+          {localDish.image_url ? (
             <img
-              src={dish.image_url}
-              alt={dish.name}
+              src={localDish.image_url}
+              alt={localDish.name}
               className="w-12 h-12 rounded-xl object-cover border border-slate-200 shrink-0"
             />
           ) : (
@@ -175,42 +313,42 @@ export function EditableDishRow({
             <div className="flex items-center gap-2 flex-wrap">
               <span
                 className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
-                  dish.meal_time === "breakfast"
+                  localDish.meal_time === "breakfast"
                     ? "bg-amber-50 text-amber-800 border border-amber-200"
                     : "bg-teal-50 text-[#0F766E] border border-teal-200"
                 }`}
               >
-                {dish.meal_time === "breakfast"
+                {localDish.meal_time === "breakfast"
                   ? "🌅 Ăn sáng"
-                  : dish.meal_time === "lunch"
+                  : localDish.meal_time === "lunch"
                   ? "🍱 Ăn trưa"
                   : "🕒 Cả ngày"}
               </span>
               <span className="font-bold text-sm text-slate-900">
-                {dish.name}
+                {localDish.name}
               </span>
               <span className="font-extrabold text-[#0F766E]">
-                {dish.price_vnd
-                  ? `${dish.price_vnd.toLocaleString("vi-VN")}đ`
+                {localDish.price_vnd
+                  ? `${localDish.price_vnd.toLocaleString("vi-VN")}đ`
                   : "Theo phiếu"}
               </span>
             </div>
 
-            {dish.description && (
+            {localDish.description && (
               <p className="text-[11px] text-slate-500 line-clamp-1">
-                {dish.description}
+                {localDish.description}
               </p>
             )}
 
             <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-slate-500">
               <span>
-                {dish.categories?.icon} {dish.categories?.name}
+                {localDish.categories?.icon} {localDish.categories?.name}
               </span>
-              {dish.ingredient_tags?.length > 0 && (
+              {localDish.ingredient_tags?.length > 0 && (
                 <>
                   <span>•</span>
                   <span>Nhãn tự động:</span>
-                  {dish.ingredient_tags.map((tag: string) => (
+                  {localDish.ingredient_tags.map((tag: string) => (
                     <span
                       key={tag}
                       className={`font-semibold px-1.5 py-0.5 rounded ${
@@ -242,8 +380,8 @@ export function EditableDishRow({
             <span>{isEditing ? "Đóng sửa" : "Sửa món"}</span>
           </button>
 
-          <form action={onDeleteDish}>
-            <input type="hidden" name="dish_id" value={dish.id} />
+          <form onSubmit={handleDeleteSubmit}>
+            <input type="hidden" name="dish_id" value={localDish.id} />
             <button
               type="submit"
               className="inline-flex items-center gap-1 text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-xl font-semibold border border-transparent hover:border-red-200 transition cursor-pointer"
@@ -255,16 +393,12 @@ export function EditableDishRow({
         </div>
       </div>
 
-      {/* Khung mở ra ngay bên dưới để chỉnh sửa trực tiếp món ăn đó */}
       {isEditing && (
         <form
-          action={async (fd) => {
-            await onUpdateDish(fd);
-            setIsEditing(false);
-          }}
+          onSubmit={handleUpdateSubmit}
           className="p-4 rounded-2xl bg-slate-50 border-2 border-teal-600/30 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs"
         >
-          <input type="hidden" name="dish_id" value={dish.id} />
+          <input type="hidden" name="dish_id" value={localDish.id} />
 
           <div className="sm:col-span-2">
             <label className="font-semibold text-slate-700 block mb-1">
@@ -273,7 +407,7 @@ export function EditableDishRow({
             <input
               name="name"
               required
-              defaultValue={dish.name}
+              defaultValue={localDish.name}
               className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold"
             />
           </div>
@@ -284,7 +418,7 @@ export function EditableDishRow({
             </label>
             <select
               name="meal_time"
-              defaultValue={dish.meal_time}
+              defaultValue={localDish.meal_time}
               className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-semibold"
             >
               <option value="breakfast">🌅 Điểm tâm sáng</option>
@@ -299,7 +433,7 @@ export function EditableDishRow({
             </label>
             <select
               name="category_id"
-              defaultValue={dish.category_id}
+              defaultValue={localDish.category_id}
               className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-semibold"
             >
               {categories.map((cat) => (
@@ -318,13 +452,13 @@ export function EditableDishRow({
               name="price_vnd"
               type="number"
               step="1000"
-              defaultValue={dish.price_vnd ?? 35000}
+              defaultValue={localDish.price_vnd ?? 35000}
               className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold"
             />
           </div>
 
           <DishImagePasteInput
-            defaultImage={dish.image_url || ""}
+            defaultImage={localDish.image_url || ""}
             inputName="image_url"
           />
 
@@ -334,7 +468,7 @@ export function EditableDishRow({
             </label>
             <input
               name="description"
-              defaultValue={dish.description || ""}
+              defaultValue={localDish.description || ""}
               placeholder="Mô tả thành phần, nước chấm..."
               className="w-full p-2.5 bg-white border border-slate-200 rounded-xl"
             />
@@ -346,7 +480,7 @@ export function EditableDishRow({
               className="w-full py-2.5 bg-[#0F766E] hover:bg-[#0F766E]/90 text-white font-bold rounded-xl inline-flex items-center justify-center gap-1.5 transition cursor-pointer"
             >
               <Save className="w-3.5 h-3.5" />
-              <span>Lưu thay đổi</span>
+              <span>Lưu thay đổi ngay</span>
             </button>
           </div>
         </form>
