@@ -1,48 +1,51 @@
-import { getCurrentUserRole } from "@/app/lib/auth";
-import { AuthButtonClient } from "@/app/AuthButtonClient";
 import { revalidatePath } from "next/cache";
 import { Crown, School, UserPlus, ArrowLeft } from "lucide-react";
 import { createServerSupabaseClient } from "@/app/lib/supabase/server";
+import { getCurrentUserRole } from "@/app/lib/auth";
+import { AuthButtonClient } from "@/app/AuthButtonClient";
 import {
   GodSchoolCardClient,
   SchoolImagePasteInput,
+  InstantGodForm,
 } from "./GodSchoolCardClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function GodDashboardPage() {
   const auth = await getCurrentUserRole();
-if (!auth.isGod) {
-  return (
-    <div className="min-h-screen bg-[#F4F7F9] flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl border border-slate-200 p-8 max-w-md w-full text-center space-y-4">
-        <Crown className="w-10 h-10 text-[#F59E0B] mx-auto" />
-        <h1 className="text-xl font-extrabold text-slate-900">
-          Khu Vực Giới Hạn — GOD Mode
-        </h1>
-        <p className="text-xs text-slate-500 leading-relaxed">
-          Chỉ tài khoản Nhà sáng lập (GOD) mới có quyền truy cập trung tâm
-          điều hành Liên trường.
-        </p>
-        <div className="flex justify-center pt-2">
-          <AuthButtonClient
-            userEmail={auth.email}
-            displayName={auth.displayName}
-            avatarUrl={auth.avatarUrl}
-            roleBadge={auth.roleBadge}
-            redirectPath="/admin/god"
-          />
+  if (!auth.isGod) {
+    return (
+      <div className="min-h-screen bg-[#F4F7F9] flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl border border-slate-200 p-8 max-w-md w-full text-center space-y-4">
+          <Crown className="w-10 h-10 text-[#F59E0B] mx-auto" />
+          <h1 className="text-xl font-extrabold text-slate-900">
+            Khu Vực Giới Hạn — GOD Mode
+          </h1>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Chỉ tài khoản Nhà sáng lập (GOD) mới có quyền truy cập trung tâm
+            điều hành Liên trường.
+          </p>
+          <div className="flex justify-center pt-2">
+            <AuthButtonClient
+              userEmail={auth.email}
+              displayName={auth.displayName}
+              avatarUrl={auth.avatarUrl}
+              roleBadge={auth.roleBadge}
+              customRoles={auth.customRoles}
+              redirectPath="/admin/god"
+            />
+          </div>
+          <a
+            href="/"
+            className="block text-xs font-bold text-[#0F766E] hover:underline pt-2"
+          >
+            ← Quay lại Trang chủ
+          </a>
         </div>
-        <a
-          href="/"
-          className="block text-xs font-bold text-[#0F766E] hover:underline pt-2"
-        >
-          ← Quay lại Trang chủ
-        </a>
       </div>
-    </div>
-  );
-}
+    );
+  }
+
   const supabase = await createServerSupabaseClient();
 
   const { data: schools } = await supabase
@@ -50,7 +53,6 @@ if (!auth.isGod) {
     .select("*")
     .order("created_at", { ascending: true });
 
-  // 1. Tạo trường mới (Có lưu ảnh trường image_url)
   async function createSchoolAction(formData: FormData) {
     "use server";
     const name = String(formData.get("name") ?? "").trim();
@@ -81,7 +83,6 @@ if (!auth.isGod) {
     revalidatePath("/");
   }
 
-  // 2. Bổ nhiệm nhanh Admin Chính hoặc Phó Admin
   async function assignLeadEmailAction(formData: FormData) {
     "use server";
     const school_id = String(formData.get("school_id") ?? "").trim();
@@ -120,7 +121,6 @@ if (!auth.isGod) {
     revalidatePath("/admin/god");
   }
 
-  // 3. Chỉnh sửa thông tin trường + Cập nhật ảnh trường
   async function updateSchoolInfoAction(formData: FormData) {
     "use server";
     const school_id = String(formData.get("school_id") ?? "").trim();
@@ -153,7 +153,6 @@ if (!auth.isGod) {
     revalidatePath("/");
   }
 
-  // 4. Thêm Phó Admin cho trường
   async function addSubAdminAction(formData: FormData) {
     "use server";
     const school_id = String(formData.get("school_id") ?? "").trim();
@@ -184,7 +183,6 @@ if (!auth.isGod) {
     revalidatePath("/admin/god");
   }
 
-  // 5. Gỡ Phó Admin của trường
   async function removeSubAdminAction(formData: FormData) {
     "use server";
     const school_id = String(formData.get("school_id") ?? "").trim();
@@ -213,7 +211,6 @@ if (!auth.isGod) {
     revalidatePath("/admin/god");
   }
 
-  // 6. Xóa vĩnh viễn trường
   async function deleteSchoolAction(formData: FormData) {
     "use server";
     const school_id = String(formData.get("school_id") ?? "").trim();
@@ -263,7 +260,7 @@ if (!auth.isGod) {
   return (
     <div className="min-h-screen bg-[#F4F7F9] p-4 sm:p-8">
       <div className="max-w-5xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <a
             href="/"
             className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-white px-3.5 py-2 rounded-2xl border border-slate-200/80 shadow-2xs transition"
@@ -271,9 +268,17 @@ if (!auth.isGod) {
             <ArrowLeft className="w-4 h-4" />
             <span>Quay lại Trang chọn trường</span>
           </a>
+
+          <AuthButtonClient
+            userEmail={auth.email}
+            displayName={auth.displayName}
+            avatarUrl={auth.avatarUrl}
+            roleBadge={auth.roleBadge}
+            customRoles={auth.customRoles}
+            redirectPath="/admin/god"
+          />
         </div>
 
-        {/* Banner GOD Mode */}
         <section className="bg-gradient-to-r from-slate-900 via-teal-950 to-[#0F766E] text-white rounded-3xl p-6 sm:p-7 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1.5">
             <div className="inline-flex items-center gap-1.5 bg-[#F59E0B] text-slate-950 text-xs font-extrabold px-3 py-1 rounded-full">
@@ -284,8 +289,8 @@ if (!auth.isGod) {
               Trung tâm điều hành Liên trường FoodHub
             </h1>
             <p className="text-xs text-slate-300 max-w-xl leading-relaxed">
-              Mở cổng trường mới kèm Logo/Ảnh trường, bổ nhiệm Admin chính / Phó
-              Admin và bấm vào từng trường bên dưới để chỉnh sửa hoặc xóa trường.
+              Mọi thao tác Tạo trường, Bổ nhiệm Admin / Phó Admin và Sửa trường
+              đều cập nhật tức thì không cần tải lại trang.
             </p>
           </div>
           <div className="bg-white/10 backdrop-blur-md px-6 py-4 rounded-3xl border border-white/15 text-center shrink-0">
@@ -298,11 +303,11 @@ if (!auth.isGod) {
           </div>
         </section>
 
-        {/* 2 Form điều khiển của GOD */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {/* Form 1: Thêm trường mới (Có dán ảnh trường Ctrl + V) */}
-          <form
+          <InstantGodForm
             action={createSchoolAction}
+            resetOnSuccess
+            successMessage="🏫 Đã mở cổng Trường mới thành công!"
             className="bg-white rounded-3xl border border-slate-200/80 p-5 sm:p-6 space-y-4"
           >
             <div className="flex items-center gap-3">
@@ -376,13 +381,14 @@ if (!auth.isGod) {
               type="submit"
               className="w-full py-3 bg-[#0F766E] hover:bg-[#0F766E]/90 text-white text-xs font-bold rounded-2xl transition cursor-pointer shadow-sm"
             >
-              + Khởi tạo Trường mới
+              + Khởi tạo Trường mới ngay
             </button>
-          </form>
+          </InstantGodForm>
 
-          {/* Form 2: Gán quyền Admin Chính hoặc Phó Admin */}
-          <form
+          <InstantGodForm
             action={assignLeadEmailAction}
+            resetOnSuccess
+            successMessage="🛡️ Đã cấp quyền Quản trị trường thành công!"
             className="bg-white rounded-3xl border border-slate-200/80 p-5 sm:p-6 space-y-4 flex flex-col justify-between"
           >
             <div className="space-y-4">
@@ -455,12 +461,11 @@ if (!auth.isGod) {
               type="submit"
               className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-2xl transition cursor-pointer shadow-sm"
             >
-              Lưu & Cấp quyền Quản trị
+              Lưu & Cấp quyền Quản trị ngay
             </button>
-          </form>
+          </InstantGodForm>
         </div>
 
-        {/* Danh sách các trường hiện có */}
         <section className="bg-white rounded-3xl border border-slate-200/80 p-5 sm:p-6 space-y-4">
           <div>
             <h2 className="font-bold text-lg text-slate-900">

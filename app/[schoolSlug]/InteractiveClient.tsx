@@ -22,8 +22,17 @@ import {
   Crown,
   ShieldAlert,
   Undo2,
+  Award,
+  Plus,
 } from "lucide-react";
 import { createBrowserSupabaseClient } from "@/app/lib/supabase/client";
+
+export interface CustomRoleOption {
+  id: string;
+  name: string;
+  bg_color: string;
+  text_color: string;
+}
 
 export interface CurrentUserClientInfo {
   email: string | null;
@@ -32,12 +41,7 @@ export interface CurrentUserClientInfo {
   roleBadge: string;
   isGod: boolean;
   canManageSchool: boolean;
-  customRoles: Array<{
-    id: string;
-    name: string;
-    bg_color: string;
-    text_color: string;
-  }>;
+  customRoles: CustomRoleOption[];
 }
 
 export type EnrichedProfileMap = Record<
@@ -47,12 +51,7 @@ export type EnrichedProfileMap = Record<
     avatar_url?: string;
     bio?: string;
     class_name?: string;
-    roles?: Array<{
-      id: string;
-      name: string;
-      bg_color: string;
-      text_color: string;
-    }>;
+    roles?: CustomRoleOption[];
   }
 >;
 
@@ -72,7 +71,7 @@ function getOrCreateReviewerKey(userEmail?: string | null): string {
 }
 
 // ============================================================================
-// COMPONENT HUY HIỆU NGƯỜI DÙNG + BẤM VÀO ĐỂ XEM THẺ PROFILE CÁ NHÂN
+// COMPONENT HUY HIỆU NGƯỜI DÙNG + POPUP XEM PROFILE & CẤP ROLE TRỰC TIẾP
 // ============================================================================
 function UserIdentityBadge({
   name,
@@ -80,6 +79,10 @@ function UserIdentityBadge({
   avatar,
   systemBadge,
   profileMap,
+  currentUser,
+  allCustomRoles = [],
+  onAssignRole,
+  onRevokeRole,
   size = "sm",
 }: {
   name: string;
@@ -87,8 +90,13 @@ function UserIdentityBadge({
   avatar?: string | null;
   systemBadge?: string | null;
   profileMap: EnrichedProfileMap;
+  currentUser?: CurrentUserClientInfo;
+  allCustomRoles?: CustomRoleOption[];
+  onAssignRole?: (formData: FormData) => Promise<void>;
+  onRevokeRole?: (formData: FormData) => Promise<void>;
   size?: "sm" | "md";
 }) {
+  const router = useRouter();
   const [openProfileModal, setOpenProfileModal] = useState(false);
 
   const cleanEmail = email?.toLowerCase().trim() || "";
@@ -99,11 +107,68 @@ function UserIdentityBadge({
   const finalBio =
     enriched?.bio || "Thành viên đam mê ẩm thực căn tin FoodHub 🍱";
   const finalClass = enriched?.class_name || "";
-  const customRoles = enriched?.roles || [];
+
+  const [localRoles, setLocalRoles] = useState<CustomRoleOption[]>(
+    enriched?.roles || []
+  );
+  const [selectedRoleId, setSelectedRoleId] = useState<string>(
+    allCustomRoles[0]?.id || ""
+  );
+  const [roleToast, setRoleToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalRoles(enriched?.roles || []);
+  }, [enriched]);
+
+  useEffect(() => {
+    if (!selectedRoleId && allCustomRoles.length > 0) {
+      setSelectedRoleId(allCustomRoles[0].id);
+    }
+  }, [allCustomRoles, selectedRoleId]);
 
   const isGodUser =
     cleanEmail === "nguyenphutrong11102010@gmail.com" ||
     systemBadge?.includes("GOD");
+
+  const canAdminAssignRole = Boolean(
+    (currentUser?.isGod || currentUser?.canManageSchool) &&
+      cleanEmail &&
+      onAssignRole
+  );
+
+  const handleInstantAssignRole = async (
+    e: React.FormEvent<HTMLFormElement>
+  ) => {
+    e.preventDefault();
+    if (!cleanEmail || !selectedRoleId || !onAssignRole) return;
+
+    const chosenRole = allCustomRoles.find((r) => r.id === selectedRoleId);
+    if (chosenRole && !localRoles.some((r) => r.id === chosenRole.id)) {
+      setLocalRoles((prev) => [...prev, chosenRole]);
+    }
+
+    setRoleToast(`✨ Đã cấp Role "${chosenRole?.name}" cho ${finalName}!`);
+    setTimeout(() => setRoleToast(null), 2500);
+
+    const fd = new FormData();
+    fd.set("user_email", cleanEmail);
+    fd.set("role_id", selectedRoleId);
+    await onAssignRole(fd);
+    router.refresh();
+  };
+
+  const handleInstantRevokeRole = async (roleId: string, roleName: string) => {
+    if (!cleanEmail || !onRevokeRole) return;
+    setLocalRoles((prev) => prev.filter((r) => r.id !== roleId));
+    setRoleToast(`Đã gỡ Role "${roleName}"`);
+    setTimeout(() => setRoleToast(null), 2500);
+
+    const fd = new FormData();
+    fd.set("user_email", cleanEmail);
+    fd.set("role_id", roleId);
+    await onRevokeRole(fd);
+    router.refresh();
+  };
 
   return (
     <>
@@ -149,7 +214,7 @@ function UserIdentityBadge({
           </span>
         ) : null}
 
-        {customRoles.map((r) => (
+        {localRoles.map((r) => (
           <span
             key={r.id}
             style={{ backgroundColor: r.bg_color, color: r.text_color }}
@@ -208,7 +273,9 @@ function UserIdentityBadge({
                   {finalName}
                 </h3>
                 <p className="text-[11px] text-slate-400 font-medium">
-                  {cleanEmail ? "Đã xác thực Google" : "Khách tham quan"}
+                  {cleanEmail
+                    ? `Đã xác thực Google (${cleanEmail})`
+                    : "Khách tham quan (Chưa đăng nhập Google)"}
                 </p>
               </div>
 
@@ -238,20 +305,72 @@ function UserIdentityBadge({
                     </span>
                   )}
 
-                  {customRoles.map((r) => (
+                  {localRoles.map((r) => (
                     <span
                       key={r.id}
                       style={{
                         backgroundColor: r.bg_color,
                         color: r.text_color,
                       }}
-                      className="px-3 py-1 rounded-full font-extrabold text-[11px] shadow-2xs"
+                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-extrabold text-[11px] shadow-2xs"
                     >
-                      {r.name}
+                      <span>{r.name}</span>
+                      {canAdminAssignRole && (
+                        <button
+                          type="button"
+                          onClick={() => handleInstantRevokeRole(r.id, r.name)}
+                          title="Gỡ Role này"
+                          className="hover:opacity-70 cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
                     </span>
                   ))}
                 </div>
               </div>
+
+              {/* KHUNG CẤP ROLE TRỰC TIẾP CHO ADMIN / GOD NGAY TRONG THẺ PROFILE */}
+              {canAdminAssignRole && allCustomRoles.length > 0 && (
+                <form
+                  onSubmit={handleInstantAssignRole}
+                  className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200 space-y-2.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-[11px] text-amber-900 inline-flex items-center gap-1">
+                      <Award className="w-3.5 h-3.5 text-amber-600" />
+                      <span>⚡ Cấp Role trực tiếp (Admin/GOD)</span>
+                    </span>
+                  </div>
+
+                  {roleToast && (
+                    <p className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                      {roleToast}
+                    </p>
+                  )}
+
+                  <div className="flex gap-1.5">
+                    <select
+                      value={selectedRoleId}
+                      onChange={(e) => setSelectedRoleId(e.target.value)}
+                      className="flex-1 p-2 bg-white border border-amber-300 rounded-xl font-bold text-slate-800 text-xs"
+                    >
+                      {allCustomRoles.map((role) => (
+                        <option key={role.id} value={role.id}>
+                          {role.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="submit"
+                      className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl inline-flex items-center gap-1 cursor-pointer shrink-0 transition"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Cấp Role</span>
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         </div>
@@ -261,7 +380,7 @@ function UserIdentityBadge({
 }
 
 // ============================================================================
-// 1. LƯỚI THẺ MÓN ĂN + CHẤM SAO CẬP NHẬT TỨC THÌ (KHÔNG CẦN RELOAD)
+// 1. LƯỚI THẺ MÓN ĂN + CHẤM SAO CẬP NHẬT TỨC THÌ
 // ============================================================================
 function calcTierFromAvg(count: number, avg: number | null) {
   if (!count || !avg) return "NEW";
@@ -277,6 +396,9 @@ export function CompactDishGrid({
   reviewsByDish,
   currentUser,
   profileMap,
+  allCustomRoles = [],
+  onAssignRole,
+  onRevokeRole,
   onUpsertReview,
   onDeleteReview,
 }: {
@@ -284,6 +406,9 @@ export function CompactDishGrid({
   reviewsByDish: Record<string, any[]>;
   currentUser: CurrentUserClientInfo;
   profileMap: EnrichedProfileMap;
+  allCustomRoles?: CustomRoleOption[];
+  onAssignRole?: (formData: FormData) => Promise<void>;
+  onRevokeRole?: (formData: FormData) => Promise<void>;
   onUpsertReview: (formData: FormData) => Promise<void>;
   onDeleteReview: (formData: FormData) => Promise<void>;
 }) {
@@ -343,7 +468,6 @@ export function CompactDishGrid({
     }
   };
 
-  // Cập nhật lại điểm sao & Tier của món ăn ngay lập tức trên giao diện
   const syncDishStatsInState = (dishId: string, updatedList: any[]) => {
     const count = updatedList.length;
     const avg =
@@ -413,7 +537,6 @@ export function CompactDishGrid({
     }));
     syncDishStatsInState(selectedDish.id, nextList);
 
-    // Chạy lưu Database ngầm và làm mới dữ liệu Server
     await onUpsertReview(fd);
     router.refresh();
   };
@@ -678,6 +801,10 @@ export function CompactDishGrid({
                       avatar={currentUser.avatarUrl}
                       systemBadge={currentUser.roleBadge}
                       profileMap={profileMap}
+                      currentUser={currentUser}
+                      allCustomRoles={allCustomRoles}
+                      onAssignRole={onAssignRole}
+                      onRevokeRole={onRevokeRole}
                     />
                   </div>
                 ) : null}
@@ -768,7 +895,7 @@ export function CompactDishGrid({
             <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
               <p className="font-bold text-slate-800">
                 Nhận xét từ học sinh ({currentDishReviews.length}) — Bấm vào tên
-                để xem Profile:
+                để xem Profile / Cấp Role:
               </p>
               {currentDishReviews.length === 0 ? (
                 <p className="text-slate-400 italic">
@@ -788,6 +915,10 @@ export function CompactDishGrid({
                           avatar={rev.reviewer_avatar}
                           systemBadge={rev.reviewer_badge}
                           profileMap={profileMap}
+                          currentUser={currentUser}
+                          allCustomRoles={allCustomRoles}
+                          onAssignRole={onAssignRole}
+                          onRevokeRole={onRevokeRole}
                         />
                         <div className="flex items-center gap-1.5">
                           <span className="text-amber-500 font-bold">
@@ -816,7 +947,7 @@ export function CompactDishGrid({
 }
 
 // ============================================================================
-// 2. SÀN ĐỔI PHIẾU ĂN THÔNG MINH 2 CHIỀU (CẬP NHẬT TỨC THÌ 0 GIÂY)
+// 2. SÀN ĐỔI PHIẾU ĂN THÔNG MINH 2 CHIỀU
 // ============================================================================
 export function SmartTicketSwapBoard({
   weeklyItems,
@@ -1120,9 +1251,7 @@ export function SmartTicketSwapBoard({
                     </p>
                   </div>
 
-                  <form
-                    onSubmit={(e) => handleDeleteSwapSubmit(e, sw.id)}
-                  >
+                  <form onSubmit={(e) => handleDeleteSwapSubmit(e, sw.id)}>
                     <input type="hidden" name="swap_id" value={sw.id} />
                     <button
                       type="submit"
@@ -1283,7 +1412,7 @@ export function CopyWeeklyPicksButton({
 }
 
 // ============================================================================
-// 4. DIỄN ĐÀN (FORUM): CẬP NHẬT TỨC THÌ 0ms + REALTIME SUPABASE
+// 4. DIỄN ĐÀN (FORUM): TỰ CUỘN XUỐNG KHI CÓ TIN NHẮN MỚI + CẤP ROLE TRỰC TIẾP
 // ============================================================================
 const EMOJI_LIST = ["❤️", "😂", "🔥", "🤤", "😢"];
 
@@ -1292,6 +1421,9 @@ export function ForumSectionClient({
   commentsByPost,
   currentUser,
   profileMap,
+  allCustomRoles = [],
+  onAssignRole,
+  onRevokeRole,
   onCreatePost,
   onDeletePost,
   onCreateComment,
@@ -1302,6 +1434,9 @@ export function ForumSectionClient({
   commentsByPost: Record<string, any[]>;
   currentUser: CurrentUserClientInfo;
   profileMap: EnrichedProfileMap;
+  allCustomRoles?: CustomRoleOption[];
+  onAssignRole?: (formData: FormData) => Promise<void>;
+  onRevokeRole?: (formData: FormData) => Promise<void>;
   onCreatePost: (formData: FormData) => Promise<void>;
   onDeletePost: (formData: FormData) => Promise<void>;
   onCreateComment: (formData: FormData) => Promise<void>;
@@ -1329,6 +1464,20 @@ export function ForumSectionClient({
     Record<string, string>
   >({});
   const commentInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const commentsScrollRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Hàm tự động cuộn mượt xuống tin nhắn mới nhất ở dưới cùng
+  const scrollToLatestMessage = (postId: string) => {
+    setTimeout(() => {
+      const container = commentsScrollRefs.current[postId];
+      if (container) {
+        container.scrollTo({
+          top: container.scrollHeight,
+          behavior: "smooth",
+        });
+      }
+    }, 60);
+  };
 
   useEffect(() => {
     setLocalPosts(posts);
@@ -1336,9 +1485,11 @@ export function ForumSectionClient({
 
   useEffect(() => {
     setLocalCommentsMap(commentsByPost);
-  }, [commentsByPost]);
+    if (openCommentPostId) {
+      scrollToLatestMessage(openCommentPostId);
+    }
+  }, [commentsByPost, openCommentPostId]);
 
-  // Tự động lắng nghe Realtime từ Supabase để đồng bộ khi người khác nhắn tin
   useEffect(() => {
     const supabase = createBrowserSupabaseClient();
     const channel = supabase
@@ -1411,7 +1562,6 @@ export function ForumSectionClient({
     }, 50);
   };
 
-  // 1. Đăng bài Forum: Hiện ngay lập tức không chờ reload
   const handleCreatePostSubmit = async (
     e: React.FormEvent<HTMLFormElement>
   ) => {
@@ -1442,7 +1592,6 @@ export function ForumSectionClient({
     router.refresh();
   };
 
-  // 2. Xóa bài Forum: Biến mất ngay lập tức
   const handleDeletePostSubmit = async (
     e: React.FormEvent<HTMLFormElement>,
     postId: string
@@ -1456,7 +1605,6 @@ export function ForumSectionClient({
     router.refresh();
   };
 
-  // 3. Gửi tin nhắn chat trong Forum: Hiện ngay lập tức
   const handleCreateCommentSubmit = async (
     e: React.FormEvent<HTMLFormElement>,
     postId: string
@@ -1490,11 +1638,13 @@ export function ForumSectionClient({
     setCommentInputMap((prev) => ({ ...prev, [postId]: "" }));
     setReplyingToMap((prev) => ({ ...prev, [postId]: "" }));
 
+    // Tự động cuộn mượt xuống tin nhắn vừa gửi
+    scrollToLatestMessage(postId);
+
     await onCreateComment(fd);
     router.refresh();
   };
 
-  // 4. Xóa / Thu hồi tin nhắn: Hiện bảng "Hoàng Đế xóa sổ" ngay lập tức
   const handleDeleteCommentSubmit = async (
     e: React.FormEvent<HTMLFormElement>,
     postId: string,
@@ -1527,7 +1677,6 @@ export function ForumSectionClient({
     router.refresh();
   };
 
-  // 5. Thả Emoji: Tăng số đếm ngay lập tức trong 0.01s
   const handleInstantReaction = async (
     targetType: "post" | "comment",
     targetId: string,
@@ -1571,7 +1720,6 @@ export function ForumSectionClient({
 
   return (
     <div className="space-y-5">
-      {/* KHUNG ĐĂNG BÀI VIẾT FORUM MỚI */}
       <form
         onSubmit={handleCreatePostSubmit}
         onPaste={handlePasteImage}
@@ -1591,6 +1739,10 @@ export function ForumSectionClient({
                 avatar={currentUser.avatarUrl}
                 systemBadge={currentUser.roleBadge}
                 profileMap={profileMap}
+                currentUser={currentUser}
+                allCustomRoles={allCustomRoles}
+                onAssignRole={onAssignRole}
+                onRevokeRole={onRevokeRole}
               />
             </div>
             <a
@@ -1692,7 +1844,6 @@ export function ForumSectionClient({
         </div>
       </form>
 
-      {/* DANH SÁCH CÁC CHỦ ĐỀ FORUM */}
       <div className="space-y-4">
         {localPosts.length === 0 ? (
           <p className="text-xs text-slate-400 text-center py-6">
@@ -1730,6 +1881,10 @@ export function ForumSectionClient({
                       avatar={post.author_avatar}
                       systemBadge={post.author_badge}
                       profileMap={profileMap}
+                      currentUser={currentUser}
+                      allCustomRoles={allCustomRoles}
+                      onAssignRole={onAssignRole}
+                      onRevokeRole={onRevokeRole}
                       size="md"
                     />
                     <h3 className="font-extrabold text-base text-slate-900 pt-0.5">
@@ -1738,9 +1893,7 @@ export function ForumSectionClient({
                   </div>
 
                   {canDeleteThisPost && (
-                    <form
-                      onSubmit={(e) => handleDeletePostSubmit(e, post.id)}
-                    >
+                    <form onSubmit={(e) => handleDeletePostSubmit(e, post.id)}>
                       <input type="hidden" name="post_id" value={post.id} />
                       <button
                         type="submit"
@@ -1792,9 +1945,11 @@ export function ForumSectionClient({
 
                   <button
                     type="button"
-                    onClick={() =>
-                      setOpenCommentPostId(isOpen ? null : post.id)
-                    }
+                    onClick={() => {
+                      const nextId = isOpen ? null : post.id;
+                      setOpenCommentPostId(nextId);
+                      if (nextId) scrollToLatestMessage(nextId);
+                    }}
                     className="inline-flex items-center gap-1.5 font-extrabold text-[#0F766E] bg-teal-50/70 hover:bg-teal-100/80 px-3.5 py-1.5 rounded-full transition cursor-pointer"
                   >
                     <MessageCircle className="w-4 h-4" />
@@ -1814,7 +1969,12 @@ export function ForumSectionClient({
                         dưới nhé!
                       </p>
                     ) : (
-                      <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                      <div
+                        ref={(el) => {
+                          commentsScrollRefs.current[post.id] = el;
+                        }}
+                        className="space-y-2.5 max-h-80 overflow-y-auto pr-1 scroll-smooth"
+                      >
                         {comments.map((c: any) => {
                           const isCommentOwner = Boolean(
                             currentUser.email &&
@@ -1847,6 +2007,10 @@ export function ForumSectionClient({
                                     avatar={c.author_avatar}
                                     systemBadge={c.author_badge}
                                     profileMap={profileMap}
+                                    currentUser={currentUser}
+                                    allCustomRoles={allCustomRoles}
+                                    onAssignRole={onAssignRole}
+                                    onRevokeRole={onRevokeRole}
                                   />
 
                                   {c.reply_to_name && !deletedRole && (

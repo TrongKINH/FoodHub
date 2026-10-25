@@ -72,6 +72,7 @@ export default async function SchoolHomePage({
     { data: forumComments },
     { data: userProfiles },
     { data: roleAssignments },
+    { data: allCustomRoles },
   ] = await Promise.all([
     dishQuery,
     supabase
@@ -111,9 +112,12 @@ export default async function SchoolHomePage({
       .order("created_at", { ascending: true }),
     supabase.from("user_profiles").select("*"),
     supabase.from("user_role_assignments").select("*, custom_roles(*)"),
+    supabase
+      .from("custom_roles")
+      .select("*")
+      .order("created_at", { ascending: false }),
   ]);
 
-  // Xây dựng bản đồ ánh xạ Email -> { Username, Avatar, Danh sách Role màu }
   const profileMap: EnrichedProfileMap = {};
   (userProfiles ?? []).forEach((p: any) => {
     const em = p.email?.toLowerCase().trim();
@@ -163,8 +167,53 @@ export default async function SchoolHomePage({
   };
 
   // ==========================================================================
-  // SERVER ACTIONS: CHẤM SAO (TỰ ĐỘNG GẮN AVATAR + TÊN + ROLE NẾU ĐÃ LOGIN)
+  // SERVER ACTIONS: CẤP & GỠ ROLE TRỰC TIẾP TỪ POPUP PROFILE TRONG FORUM
   // ==========================================================================
+  async function assignUserRoleQuickAction(formData: FormData) {
+    "use server";
+    const currentAuth = await getCurrentUserRole(school);
+    if (!currentAuth.isGod && !currentAuth.canManageSchool) return;
+
+    const user_email = String(formData.get("user_email") ?? "")
+      .trim()
+      .toLowerCase();
+    const role_id = String(formData.get("role_id") ?? "").trim();
+    if (!user_email || !role_id) return;
+
+    const sb = await createServerSupabaseClient();
+    await sb.from("user_role_assignments").upsert(
+      {
+        user_email,
+        role_id,
+        assigned_by: currentAuth.email,
+      },
+      { onConflict: "user_email,role_id" }
+    );
+
+    revalidatePath(`/${school.slug}`);
+  }
+
+  async function revokeUserRoleQuickAction(formData: FormData) {
+    "use server";
+    const currentAuth = await getCurrentUserRole(school);
+    if (!currentAuth.isGod && !currentAuth.canManageSchool) return;
+
+    const user_email = String(formData.get("user_email") ?? "")
+      .trim()
+      .toLowerCase();
+    const role_id = String(formData.get("role_id") ?? "").trim();
+    if (!user_email || !role_id) return;
+
+    const sb = await createServerSupabaseClient();
+    await sb
+      .from("user_role_assignments")
+      .delete()
+      .eq("user_email", user_email)
+      .eq("role_id", role_id);
+
+    revalidatePath(`/${school.slug}`);
+  }
+
   async function upsertReviewAction(formData: FormData) {
     "use server";
     const currentAuth = await getCurrentUserRole(school);
@@ -221,9 +270,6 @@ export default async function SchoolHomePage({
     revalidatePath(`/${school.slug}`);
   }
 
-  // ==========================================================================
-  // SERVER ACTIONS: ĐỔI PHIẾU ĂN
-  // ==========================================================================
   async function createSwapAction(formData: FormData) {
     "use server";
     const currentAuth = await getCurrentUserRole(school);
@@ -318,9 +364,6 @@ export default async function SchoolHomePage({
     revalidatePath(`/${school.slug}`);
   }
 
-  // ==========================================================================
-  // SERVER ACTIONS: FORUM (ĐĂNG BÀI, XÓA BÀI, TRẢ LỜI, XÓA SỔ HOÀNG ĐẾ, EMOJI)
-  // ==========================================================================
   async function createForumPostAction(formData: FormData) {
     "use server";
     const currentAuth = await getCurrentUserRole(school);
@@ -405,7 +448,6 @@ export default async function SchoolHomePage({
     revalidatePath(`/${school.slug}`);
   }
 
-  // Xóa / Thu hồi tin nhắn Forum: Ghi rõ Hoàng Đế xóa, Admin xóa hay Chính chủ thu hồi
   async function deleteForumCommentAction(formData: FormData) {
     "use server";
     const currentAuth = await getCurrentUserRole(school);
@@ -430,16 +472,12 @@ export default async function SchoolHomePage({
     let deleted_by_role = "self";
     let replacementText = "Tin nhắn đã được chính chủ thu hồi.";
 
-    if (currentAuth.isGod && !isOwner) {
+    if (currentAuth.isGod) {
       deleted_by_role = "god";
       replacementText = "(Hoàng Đế đã xóa sổ tin nhắn này)";
     } else if (currentAuth.canManageSchool && !isOwner) {
       deleted_by_role = "admin";
       replacementText = "(Admin nhà trường đã xóa tin nhắn này)";
-    } else if (currentAuth.isGod && isOwner) {
-      // Nếu GOD xóa tin nhắn bất kỳ và muốn hiện oai phong Hoàng Đế
-      deleted_by_role = "god";
-      replacementText = "(Hoàng Đế đã xóa sổ tin nhắn này)";
     }
 
     await sb
@@ -453,7 +491,6 @@ export default async function SchoolHomePage({
     revalidatePath(`/${school.slug}`);
   }
 
-  // Thả Emoji cảm xúc cho Bài đăng hoặc Tin nhắn chat
   async function reactForumItemAction(formData: FormData) {
     "use server";
     const target_type = String(formData.get("target_type") ?? "");
@@ -531,7 +568,8 @@ export default async function SchoolHomePage({
                 </h1>
               </div>
               <p className="text-[11px] text-slate-500">
-                Bấm vào từng món để xem ảnh chi tiết, mô tả & chấm sao
+                Bấm vào từng món để xem ảnh chi tiết • Bấm vào tên thành viên để
+                xem Profile
               </p>
             </div>
           </div>
@@ -567,7 +605,6 @@ export default async function SchoolHomePage({
       </header>
 
       <main className="max-w-5xl mx-auto px-4 pt-6 space-y-8">
-        {/* KHU VỰC 1: DANH SÁCH MÓN ĂN */}
         <section className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 space-y-5 shadow-2xs">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="inline-flex p-1 rounded-2xl bg-slate-100">
@@ -634,13 +671,15 @@ export default async function SchoolHomePage({
               reviewsByDish={reviewsByDish}
               currentUser={currentUserInfo}
               profileMap={profileMap}
+              allCustomRoles={allCustomRoles ?? []}
+              onAssignRole={assignUserRoleQuickAction}
+              onRevokeRole={revokeUserRoleQuickAction}
               onUpsertReview={upsertReviewAction}
               onDeleteReview={deleteReviewAction}
             />
           )}
         </section>
 
-        {/* KHU VỰC 2: BẢNG XẾP HẠNG TIER LIST */}
         <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-2xs">
           <div className="flex items-center gap-2">
             <Trophy className="w-5 h-5 text-[#F59E0B]" />
@@ -725,7 +764,6 @@ export default async function SchoolHomePage({
           </div>
         </section>
 
-        {/* KHU VỰC 3: TRỢ LÝ ĐIỀN FORM ĐĂNG KÝ MÓN ĂN TUẦN */}
         {(weeklyItems ?? []).length > 0 && (
           <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-2xs">
             <div className="flex items-center justify-between flex-wrap gap-3">
@@ -809,7 +847,6 @@ export default async function SchoolHomePage({
           </section>
         )}
 
-        {/* KHU VỰC 4: SÀN TRAO ĐỔI PHIẾU ĂN THÔNG MINH 2 CHIỀU */}
         <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-2xs">
           <div className="flex items-center gap-2">
             <Repeat className="w-5 h-5 text-[#0F766E]" />
@@ -835,7 +872,6 @@ export default async function SchoolHomePage({
           />
         </section>
 
-        {/* KHU VỰC 5: DIỄN ĐÀN ẨM THỰC TRƯỜNG (SINH ĐỘNG + ROLE + XÓA SỔ HOÀNG ĐẾ) */}
         <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-2xs">
           <div className="flex items-center gap-2">
             <MessageSquare className="w-5 h-5 text-[#0F766E]" />
@@ -844,8 +880,8 @@ export default async function SchoolHomePage({
                 Diễn Đàn Ẩm Thực Căn Tin {school.short_name}
               </h2>
               <p className="text-xs text-slate-500">
-                Tự động hiển thị Avatar & Role danh hiệu • Hỗ trợ thả cảm xúc,
-                trả lời tin nhắn và thu hồi / xóa sổ
+                Bấm vào tên thành viên để xem Profile & Cấp Role trực tiếp • Tự
+                động cuộn xuống khi có tin nhắn mới
               </p>
             </div>
           </div>
@@ -855,6 +891,9 @@ export default async function SchoolHomePage({
             commentsByPost={commentsByPost}
             currentUser={currentUserInfo}
             profileMap={profileMap}
+            allCustomRoles={allCustomRoles ?? []}
+            onAssignRole={assignUserRoleQuickAction}
+            onRevokeRole={revokeUserRoleQuickAction}
             onCreatePost={createForumPostAction}
             onDeletePost={deleteForumPostAction}
             onCreateComment={createForumCommentAction}
