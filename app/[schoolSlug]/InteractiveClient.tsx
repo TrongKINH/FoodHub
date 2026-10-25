@@ -21,8 +21,8 @@ import {
   Crown,
   ShieldAlert,
   Undo2,
+  User,
 } from "lucide-react";
-import { createBrowserSupabaseClient } from "@/app/lib/supabase/client";
 
 export interface CurrentUserClientInfo {
   email: string | null;
@@ -44,6 +44,8 @@ export type EnrichedProfileMap = Record<
   {
     display_name?: string;
     avatar_url?: string;
+    bio?: string;
+    class_name?: string;
     roles?: Array<{
       id: string;
       name: string;
@@ -68,7 +70,9 @@ function getOrCreateReviewerKey(userEmail?: string | null): string {
   return key;
 }
 
-// Component con: Hiển thị Avatar + Tên + Huy hiệu GOD/Admin + Các Role màu sắc của 1 người
+// ============================================================================
+// COMPONENT HUY HIỆU NGƯỜI DÙNG + BẤM VÀO ĐỂ XEM THẺ PROFILE CÁ NHÂN
+// ============================================================================
 function UserIdentityBadge({
   name,
   email,
@@ -84,11 +88,16 @@ function UserIdentityBadge({
   profileMap: EnrichedProfileMap;
   size?: "sm" | "md";
 }) {
+  const [openProfileModal, setOpenProfileModal] = useState(false);
+
   const cleanEmail = email?.toLowerCase().trim() || "";
   const enriched = cleanEmail ? profileMap[cleanEmail] : undefined;
 
   const finalName = enriched?.display_name || name || "Học sinh";
   const finalAvatar = enriched?.avatar_url || avatar || null;
+  const finalBio =
+    enriched?.bio || "Thành viên đam mê ẩm thực căn tin FoodHub 🍱";
+  const finalClass = enriched?.class_name || "";
   const customRoles = enriched?.roles || [];
 
   const isGodUser =
@@ -96,55 +105,168 @@ function UserIdentityBadge({
     systemBadge?.includes("GOD");
 
   return (
-    <div className="inline-flex items-center gap-2 flex-wrap">
-      {finalAvatar ? (
-        <img
-          src={finalAvatar}
-          alt={finalName}
-          className={`${
-            size === "md" ? "w-8 h-8" : "w-6 h-6"
-          } rounded-full object-cover border border-teal-500/40 shrink-0`}
-        />
-      ) : (
+    <>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpenProfileModal(true);
+        }}
+        title={`Bấm để xem hồ sơ của ${finalName}`}
+        className="inline-flex items-center gap-2 flex-wrap text-left group/user cursor-pointer hover:opacity-90 transition"
+      >
+        {finalAvatar ? (
+          <img
+            src={finalAvatar}
+            alt={finalName}
+            className={`${
+              size === "md" ? "w-8 h-8" : "w-6 h-6"
+            } rounded-full object-cover border border-teal-500/40 shrink-0 group-hover/user:ring-2 group-hover/user:ring-teal-500/40 transition`}
+          />
+        ) : (
+          <div
+            className={`${
+              size === "md" ? "w-8 h-8 text-xs" : "w-6 h-6 text-[10px]"
+            } rounded-full bg-[#0F766E] text-white font-extrabold flex items-center justify-center shrink-0 group-hover/user:ring-2 group-hover/user:ring-teal-500/40 transition`}
+          >
+            {finalName[0]?.toUpperCase()}
+          </div>
+        )}
+
+        <span className="font-extrabold text-slate-900 group-hover/user:text-[#0F766E] group-hover/user:underline transition">
+          {finalName}
+        </span>
+
+        {/* Huy hiệu chức vụ hệ thống */}
+        {isGodUser ? (
+          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+            👑 GOD
+          </span>
+        ) : systemBadge &&
+          (systemBadge.includes("Admin") || systemBadge.includes("Phó")) ? (
+          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-teal-50 text-[#0F766E] border border-teal-200">
+            {systemBadge}
+          </span>
+        ) : null}
+
+        {/* Các Role Danh Hiệu màu sắc (Thực thần, Thánh ăn...) */}
+        {customRoles.map((r) => (
+          <span
+            key={r.id}
+            style={{ backgroundColor: r.bg_color, color: r.text_color }}
+            className="text-[10px] font-extrabold px-2 py-0.5 rounded-full shadow-2xs"
+          >
+            {r.name}
+          </span>
+        ))}
+      </button>
+
+      {/* POPUP XEM HỒ SƠ CÁ NHÂN KHI BẤM VÀO TÊN / AVATAR */}
+      {openProfileModal && (
         <div
-          className={`${
-            size === "md" ? "w-8 h-8 text-xs" : "w-6 h-6 text-[10px]"
-          } rounded-full bg-[#0F766E] text-white font-extrabold flex items-center justify-center shrink-0`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpenProfileModal(false);
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
         >
-          {finalName[0]?.toUpperCase()}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl border border-slate-200 max-w-sm w-full overflow-hidden shadow-2xl text-xs animate-in fade-in zoom-in-95 duration-150"
+          >
+            {/* Banner đầu thẻ Profile */}
+            <div className="h-24 bg-gradient-to-r from-slate-900 via-teal-900 to-[#0F766E] relative">
+              <button
+                type="button"
+                onClick={() => setOpenProfileModal(false)}
+                className="absolute top-3 right-3 p-1.5 rounded-full bg-black/30 hover:bg-black/50 text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-6 pb-6 -mt-12 space-y-4">
+              <div className="flex items-end justify-between">
+                {finalAvatar ? (
+                  <img
+                    src={finalAvatar}
+                    alt={finalName}
+                    className="w-20 h-20 rounded-full object-cover border-4 border-white shadow-lg bg-white"
+                  />
+                ) : (
+                  <div className="w-20 h-20 rounded-full bg-[#0F766E] text-white font-extrabold text-2xl flex items-center justify-center border-4 border-white shadow-lg">
+                    {finalName[0]?.toUpperCase()}
+                  </div>
+                )}
+
+                {finalClass && (
+                  <span className="px-3 py-1 rounded-full bg-teal-50 text-[#0F766E] border border-teal-200 font-extrabold text-[11px]">
+                    🏫 {finalClass}
+                  </span>
+                )}
+              </div>
+
+              <div>
+                <h3 className="text-lg font-extrabold text-slate-900">
+                  {finalName}
+                </h3>
+                <p className="text-[11px] text-slate-400 font-medium">
+                  {cleanEmail ? "Đã xác thực Google" : "Khách tham quan"}
+                </p>
+              </div>
+
+              {/* Tiểu sử (Bio) */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-slate-700 leading-relaxed">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                  Giới thiệu bản thân
+                </p>
+                <p>&ldquo;{finalBio}&rdquo;</p>
+              </div>
+
+              {/* Danh sách Role & Danh hiệu đang sở hữu */}
+              <div className="space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Chức vụ & Role Danh Hiệu
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {isGodUser ? (
+                    <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-[11px]">
+                      👑 GOD — Nhà Sáng Lập
+                    </span>
+                  ) : systemBadge ? (
+                    <span className="px-3 py-1 rounded-full bg-teal-50 text-[#0F766E] border border-teal-200 font-extrabold text-[11px]">
+                      {systemBadge}
+                    </span>
+                  ) : (
+                    <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-bold text-[11px]">
+                      🎒 Học sinh
+                    </span>
+                  )}
+
+                  {customRoles.map((r) => (
+                    <span
+                      key={r.id}
+                      style={{
+                        backgroundColor: r.bg_color,
+                        color: r.text_color,
+                      }}
+                      className="px-3 py-1 rounded-full font-extrabold text-[11px] shadow-2xs"
+                    >
+                      {r.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
-
-      <span className="font-extrabold text-slate-900">{finalName}</span>
-
-      {/* Huy hiệu chức vụ hệ thống */}
-      {isGodUser ? (
-        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
-          👑 GOD
-        </span>
-      ) : systemBadge &&
-        (systemBadge.includes("Admin") || systemBadge.includes("Phó")) ? (
-        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-teal-50 text-[#0F766E] border border-teal-200">
-          {systemBadge}
-        </span>
-      ) : null}
-
-      {/* Các Role Danh Hiệu màu sắc (Thực thần, Thánh ăn...) */}
-      {customRoles.map((r) => (
-        <span
-          key={r.id}
-          style={{ backgroundColor: r.bg_color, color: r.text_color }}
-          className="text-[10px] font-extrabold px-2 py-0.5 rounded-full shadow-2xs"
-        >
-          {r.name}
-        </span>
-      ))}
-    </div>
+    </>
   );
 }
 
 // ============================================================================
-// 1. LƯỚI THẺ MÓN ĂN + POPUP ĐÁNH GIÁ (ẨN Ô NHẬP TÊN NẾU ĐÃ ĐĂNG NHẬP)
+// 1. LƯỚI THẺ MÓN ĂN + POPUP ĐÁNH GIÁ
 // ============================================================================
 export function CompactDishGrid({
   dishes,
@@ -332,7 +454,7 @@ export function CompactDishGrid({
       {selectedDish && (
         <div
           onClick={() => setSelectedDish(null)}
-          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+          className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -444,11 +566,10 @@ export function CompactDishGrid({
                 <input type="hidden" name="rating" value={rating} />
                 <input type="hidden" name="tag" value={selectedTag} />
 
-                {/* Nếu ĐÃ ĐĂNG NHẬP: Hiện thẻ Avatar + Tên + Role luôn, ẩn ô nhập tên */}
                 {currentUser.email ? (
                   <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-teal-200">
                     <span className="text-[11px] text-slate-500 font-semibold">
-                      Đánh giá với tư cách:
+                      Đánh giá dưới tên:
                     </span>
                     <UserIdentityBadge
                       name={currentUser.displayName || "Học sinh"}
@@ -501,7 +622,6 @@ export function CompactDishGrid({
                   ))}
                 </div>
 
-                {/* Chỉ hiện ô nhập tên nếu CHƯA đăng nhập */}
                 {currentUser.email ? (
                   <input
                     name="body"
@@ -544,10 +664,10 @@ export function CompactDishGrid({
               </form>
             </div>
 
-            {/* Danh sách nhận xét của mọi người (Hiện đầy đủ Avatar + Tên + Role màu) */}
             <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
               <p className="font-bold text-slate-800">
-                Nhận xét từ học sinh ({currentDishReviews.length}):
+                Nhận xét từ học sinh ({currentDishReviews.length}) — Bấm vào tên
+                để xem Profile:
               </p>
               {currentDishReviews.length === 0 ? (
                 <p className="text-slate-400 italic">
@@ -955,7 +1075,7 @@ export function CopyWeeklyPicksButton({
 }
 
 // ============================================================================
-// 4. DIỄN ĐÀN (FORUM) SIÊU SINH ĐỘNG: AVATAR + ROLE + EMOJI + TRẢ LỜI + XÓA CÓ DẤU VẾT
+// 4. DIỄN ĐÀN (FORUM): BẤM VÀO TÊN XEM PROFILE + EMOJI + TRẢ LỜI + HOÀNG ĐẾ XÓA SỔ
 // ============================================================================
 const EMOJI_LIST = ["❤️", "😂", "🔥", "🤤", "😢"];
 
@@ -990,7 +1110,6 @@ export function ForumSectionClient({
   );
   const commentInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  // Nén ảnh dán Ctrl+V trực tiếp thành DataURL để không bao giờ bị lỗi Storage
   const handleUploadFile = async (file: File) => {
     if (!file.type.startsWith("image/")) return;
     setUploading(true);
@@ -1055,12 +1174,11 @@ export function ForumSectionClient({
       >
         <input type="hidden" name="image_url" value={imageUrl} />
 
-        {/* Nếu ĐÃ ĐĂNG NHẬP: Hiện sẵn Avatar + Tên + Role, ẩn ô nhập tên */}
         {currentUser.email ? (
           <div className="flex items-center justify-between flex-wrap gap-2 bg-white px-3.5 py-2.5 rounded-2xl border border-teal-200/80">
             <div className="flex items-center gap-2">
               <span className="text-[11px] font-semibold text-slate-500">
-                Đăng thảo luận với tư cách:
+                Đăng bài dưới tên:
               </span>
               <UserIdentityBadge
                 name={currentUser.displayName || "Học sinh"}
@@ -1074,7 +1192,7 @@ export function ForumSectionClient({
               href="/profile"
               className="text-[11px] font-bold text-[#0F766E] hover:underline"
             >
-              Đổi Avatar / Role →
+              Chỉnh Profile & Role →
             </a>
           </div>
         ) : null}
@@ -1191,7 +1309,6 @@ export function ForumSectionClient({
                 key={post.id}
                 className="p-5 rounded-3xl border border-slate-200 bg-white space-y-3.5 text-xs shadow-2xs"
               >
-                {/* Header Bài Viết: Avatar + Tên + Role + Nút Xóa Forum */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1.5">
                     <UserIdentityBadge
@@ -1207,7 +1324,6 @@ export function ForumSectionClient({
                     </h3>
                   </div>
 
-                  {/* Nút xóa bài Forum (Cho GOD, Admin trường hoặc Chính chủ) */}
                   {canDeleteThisPost && (
                     <form action={onDeletePost}>
                       <input type="hidden" name="post_id" value={post.id} />
@@ -1235,9 +1351,7 @@ export function ForumSectionClient({
                   />
                 )}
 
-                {/* Thanh Tương Tác Bài Viết: Thả Emoji + Nút Mở Khung Chat */}
                 <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
-                  {/* Dãy nút thả Emoji */}
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {EMOJI_LIST.map((emoji) => {
                       const count = Number(postReactions[emoji] || 0);
@@ -1282,7 +1396,6 @@ export function ForumSectionClient({
                   </button>
                 </div>
 
-                {/* KHU VỰC CHAT / BÌNH LUẬN TRỰC TIẾP TRONG BÀI FORUM */}
                 {isOpen && (
                   <div className="bg-slate-50 rounded-3xl p-4 border border-slate-200/90 space-y-3.5">
                     {comments.length === 0 ? (
@@ -1333,7 +1446,6 @@ export function ForumSectionClient({
                                   )}
                                 </div>
 
-                                {/* Cụm nút Trả lời & Thu hồi / Xóa tin nhắn */}
                                 {!deletedRole && (
                                   <div className="flex items-center gap-1.5">
                                     <button
@@ -1359,11 +1471,6 @@ export function ForumSectionClient({
                                         />
                                         <button
                                           type="submit"
-                                          title={
-                                            isCommentOwner && !currentUser.isGod
-                                              ? "Thu hồi tin nhắn"
-                                              : "Xóa sổ tin nhắn này"
-                                          }
                                           className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 hover:bg-red-50 px-2 py-0.5 rounded-lg cursor-pointer"
                                         >
                                           {isCommentOwner &&
@@ -1386,7 +1493,6 @@ export function ForumSectionClient({
                                 )}
                               </div>
 
-                              {/* NỘI DUNG TIN NHẮN HOẶC THÔNG BÁO ĐÃ BỊ XÓA SỔ */}
                               {deletedRole === "god" ? (
                                 <div className="p-2.5 rounded-xl bg-gradient-to-r from-amber-100 via-yellow-50 to-amber-100 border border-amber-300 text-amber-950 font-extrabold text-xs flex items-center gap-2">
                                   <Crown className="w-4 h-4 text-amber-600 shrink-0" />
@@ -1411,7 +1517,6 @@ export function ForumSectionClient({
                                     {c.body}
                                   </p>
 
-                                  {/* Thả Emoji cho từng tin nhắn chat */}
                                   <div className="pl-8 flex items-center gap-1 flex-wrap pt-0.5">
                                     {EMOJI_LIST.map((emoji) => {
                                       const cnt = Number(
@@ -1457,7 +1562,6 @@ export function ForumSectionClient({
                       </div>
                     )}
 
-                    {/* Đang trả lời ai đó */}
                     {activeReplyTarget && (
                       <div className="flex items-center justify-between bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl text-[11px] font-bold text-[#0F766E]">
                         <span>↩️ Đang trả lời @{activeReplyTarget}</span>
@@ -1476,7 +1580,6 @@ export function ForumSectionClient({
                       </div>
                     )}
 
-                    {/* FORM GÕ TIN NHẮN TRẢ LỜI (Ẩn ô nhập tên nếu đã đăng nhập) */}
                     <form
                       action={async (fd) => {
                         await onCreateComment(fd);

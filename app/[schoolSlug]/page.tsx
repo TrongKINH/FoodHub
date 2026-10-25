@@ -121,6 +121,8 @@ export default async function SchoolHomePage({
       profileMap[em] = {
         display_name: p.display_name,
         avatar_url: p.avatar_url,
+        bio: p.bio,
+        class_name: p.class_name,
         roles: [],
       };
     }
