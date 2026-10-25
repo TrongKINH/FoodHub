@@ -1,3 +1,4 @@
+import { AdminDishSearchList } from "./AdminDishSearchList";
 import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import {
@@ -1166,17 +1167,12 @@ export default async function SchoolAdminPage({
             )}
           </div>
 
-          <div className="divide-y divide-slate-100 text-xs">
-            {(dishes ?? []).map((dish: any) => (
-              <EditableDishRow
-                key={dish.id}
-                dish={dish}
-                categories={categories ?? []}
-                onUpdateDish={updateDishAction}
-                onDeleteDish={deleteDishAction}
-              />
-            ))}
-          </div>
+          <AdminDishSearchList
+            dishes={dishes ?? []}
+            categories={categories ?? []}
+            onUpdateDish={updateDishAction}
+            onDeleteDish={deleteDishAction}
+          />
         </section>
       </main>
     </div>
