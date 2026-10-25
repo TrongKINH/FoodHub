@@ -1,3 +1,6 @@
+import { SchoolLiveSearchClient } from "@/app/SchoolLiveSearchClient";
+import { getCurrentUserRole } from "@/app/lib/auth";
+import { AuthButtonClient } from "@/app/AuthButtonClient";
 import {
   ArrowRight,
   Crown,
@@ -11,6 +14,7 @@ import { createServerSupabaseClient } from "@/app/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 export default async function LandingSchoolSelectorPage() {
+  const auth = await getCurrentUserRole();
   const supabase = await createServerSupabaseClient();
   const { data: schools } = await supabase
     .from("schools")
@@ -21,7 +25,7 @@ export default async function LandingSchoolSelectorPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-teal-50/50 via-[#F4F7F9] to-slate-100/80 flex flex-col justify-between p-4 sm:p-8">
       {/* Thanh Top Bar */}
-      <header className="max-w-5xl w-full mx-auto flex items-center justify-between py-2 px-4 rounded-3xl bg-white/80 backdrop-blur-md border border-slate-200/70">
+      <header className="max-w-5xl w-full mx-auto flex items-center justify-between py-2.5 px-4 rounded-3xl bg-white/80 backdrop-blur-md border border-slate-200/70 gap-2">
         <div className="flex items-center gap-2.5">
           <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#0F766E] to-teal-500 text-white flex items-center justify-center shadow-sm">
             <Utensils className="w-5 h-5" />
@@ -36,13 +40,24 @@ export default async function LandingSchoolSelectorPage() {
           </div>
         </div>
 
-        <a
-          href="/admin/god"
-          className="inline-flex items-center gap-1.5 text-xs font-extrabold bg-slate-900 text-white px-4 py-2.5 rounded-2xl shadow-sm hover:bg-slate-800 transition"
-        >
-          <Crown className="w-4 h-4 text-[#F59E0B]" />
-          <span>GOD Mode (/admin/god)</span>
-        </a>
+        <div className="flex items-center gap-2">
+          {auth.isGod && (
+            <a
+              href="/admin/god"
+              className="inline-flex items-center gap-1.5 text-xs font-extrabold bg-slate-900 text-white px-3.5 py-2 rounded-2xl shadow-sm hover:bg-slate-800 transition"
+            >
+              <Crown className="w-4 h-4 text-[#F59E0B]" />
+              <span>GOD Mode</span>
+            </a>
+          )}
+          <AuthButtonClient
+            userEmail={auth.email}
+            displayName={auth.displayName}
+            avatarUrl={auth.avatarUrl}
+            roleBadge={auth.roleBadge}
+            redirectPath="/"
+          />
+        </div>
       </header>
 
       {/* Khối Trung Tâm */}
@@ -118,46 +133,7 @@ export default async function LandingSchoolSelectorPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {(schools ?? []).map((sc) => (
-              <a
-                key={sc.id}
-                href={`/${sc.slug}`}
-                className="flex items-center justify-between p-4 rounded-3xl border border-slate-200/90 hover:border-[#0F766E] bg-white hover:bg-teal-50/20 transition-all duration-300 group hover:-translate-y-0.5 hover:shadow-lg"
-              >
-                <div className="flex items-center gap-3.5">
-                  {sc.image_url ? (
-                    <img
-                      src={sc.image_url}
-                      alt={sc.short_name}
-                      className="w-14 h-14 rounded-2xl object-cover border border-slate-200 shadow-xs shrink-0"
-                    />
-                  ) : (
-                    <div className="min-w-14 h-14 px-3 rounded-2xl bg-gradient-to-br from-[#0F766E] to-teal-500 text-white font-extrabold text-xs flex items-center justify-center shadow-sm shrink-0">
-                      {sc.short_name}
-                    </div>
-                  )}
-
-                  <div>
-                    <h3 className="font-bold text-sm sm:text-base text-slate-900 group-hover:text-[#0F766E] transition">
-                      {sc.name}
-                    </h3>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-[11px] font-bold text-[#0F766E] bg-teal-50 px-2.5 py-0.5 rounded-lg">
-                        /{sc.slug}
-                      </span>
-                      <span className="text-[11px] text-slate-400">
-                        • Xem thực đơn & Form tuần
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div className="w-9 h-9 rounded-full bg-slate-100 group-hover:bg-[#0F766E] group-hover:text-white text-slate-500 flex items-center justify-center transition shrink-0">
-                  <ArrowRight className="w-4 h-4" />
-                </div>
-              </a>
-            ))}
-          </div>
+         <SchoolLiveSearchClient schools={schools ?? []} />
         </section>
       </main>
 

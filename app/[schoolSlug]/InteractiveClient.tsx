@@ -4,8 +4,8 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   Star, Heart, Copy, Check, MessageSquarePlus, Image as ImageIcon,
-  Loader2, X, Trash2, Edit3, MessageCircle, Send, Handshake,
-  MapPin, RotateCcw, Reply, Crown, ShieldAlert, Undo2, Award, Plus, Filter
+  X, Trash2, Edit3, MessageCircle, Send, Handshake,
+  MapPin, RotateCcw, Reply, Crown, ShieldAlert, Undo2, Award, Plus, Filter, Search
 } from "lucide-react";
 import { createBrowserSupabaseClient } from "@/app/lib/supabase/client";
 
@@ -18,6 +18,11 @@ export type EnrichedProfileMap = Record<string, {
   display_name?: string; avatar_url?: string; bio?: string; class_name?: string; roles?: CustomRoleOption[];
 }>;
 
+// Hàm bỏ dấu tiếng Việt giúp gõ từng chữ không dấu vẫn tìm ra món ăn chính xác
+function normText(str: string): string {
+  return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").trim();
+}
+
 function getOrCreateReviewerKey(userEmail?: string | null): string {
   if (userEmail) return `google_${userEmail}`;
   if (typeof window === "undefined") return "server";
@@ -29,9 +34,12 @@ function getOrCreateReviewerKey(userEmail?: string | null): string {
   return key;
 }
 
-// ============================================================================
-// HUY HIỆU NGƯỜI DÙNG + POPUP XEM PROFILE & CẤP ROLE TRỰC TIẾP (ADMIN / GOD)
-// ============================================================================
+function emitInstantSync(detail: Record<string, any>) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("foodhub:instant-sync", { detail }));
+  }
+}
+
 function UserIdentityBadge({
   name, email, avatar, systemBadge, profileMap, currentUser, allCustomRoles = [], onAssignRole, onRevokeRole, size = "sm",
 }: {
@@ -63,7 +71,10 @@ function UserIdentityBadge({
     e.preventDefault();
     if (!cleanEmail || !selectedRoleId || !onAssignRole) return;
     const chosen = allCustomRoles.find((r) => r.id === selectedRoleId);
-    if (chosen && !localRoles.some((r) => r.id === chosen.id)) setLocalRoles((prev) => [...prev, chosen]);
+    if (chosen && !localRoles.some((r) => r.id === chosen.id)) {
+      setLocalRoles((prev) => [...prev, chosen]);
+      emitInstantSync({ type: "role_assign", email: cleanEmail, role: chosen });
+    }
     setRoleToast(`✨ Đã cấp Role "${chosen?.name}"!`);
     setTimeout(() => setRoleToast(null), 2500);
     const fd = new FormData(); fd.set("user_email", cleanEmail); fd.set("role_id", selectedRoleId);
@@ -73,6 +84,7 @@ function UserIdentityBadge({
   const handleRevoke = async (roleId: string, roleName: string) => {
     if (!cleanEmail || !onRevokeRole) return;
     setLocalRoles((prev) => prev.filter((r) => r.id !== roleId));
+    emitInstantSync({ type: "role_revoke", email: cleanEmail, role_id: roleId });
     setRoleToast(`Đã gỡ Role "${roleName}"`);
     setTimeout(() => setRoleToast(null), 2500);
     const fd = new FormData(); fd.set("user_email", cleanEmail); fd.set("role_id", roleId);
@@ -156,7 +168,7 @@ function UserIdentityBadge({
 }
 
 // ============================================================================
-// 1. LƯỚI MÓN ĂN + POPUP ĐÁNH GIÁ CÓ BỘ LỌC CHI TIẾT 5⭐ -> 1⭐
+// 1. LƯỚI MÓN ĂN (CÓ Ô TÌM KIẾM GÕ TỪNG CHỮ + LỌC 5⭐ -> 1⭐)
 // ============================================================================
 function calcTierFromAvg(count: number, avg: number | null) {
   if (!count || !avg) return "NEW";
@@ -177,6 +189,7 @@ export function CompactDishGrid({
   const router = useRouter();
   const [localDishes, setLocalDishes] = useState<any[]>(dishes);
   const [localReviewsMap, setLocalReviewsMap] = useState<Record<string, any[]>>(reviewsByDish);
+  const [dishSearchQuery, setDishSearchQuery] = useState<string>("");
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   const [reviewerKey, setReviewerKey] = useState<string>("");
   const [rating, setRating] = useState<number>(5);
@@ -184,7 +197,6 @@ export function CompactDishGrid({
   const [reviewerName, setReviewerName] = useState<string>("");
   const [body, setBody] = useState<string>("");
   const [likedMap, setLikedMap] = useState<Record<string, boolean>>({});
-  // Bộ lọc số sao: null = Tất cả, hoặc 5, 4, 3, 2, 1
   const [starFilter, setStarFilter] = useState<number | null>(null);
 
   useEffect(() => { setLocalDishes(dishes); }, [dishes]);
@@ -196,9 +208,20 @@ export function CompactDishGrid({
 
   const selectedDish = localDishes.find((d) => d.id === selectedDishId) || null;
 
+  // Lọc món ăn tức thì ngay khi gõ từng chữ cái
+  const normalizedDishQuery = normText(dishSearchQuery);
+  const visibleDishes = localDishes.filter((d) => {
+    if (!normalizedDishQuery) return true;
+    return (
+      normText(d.name).includes(normalizedDishQuery) ||
+      normText(d.category_name).includes(normalizedDishQuery) ||
+      normText((d.ingredient_tags || []).join(" ")).includes(normalizedDishQuery)
+    );
+  });
+
   const openDishModal = (dish: any) => {
     setSelectedDishId(dish.id);
-    setStarFilter(null); // Reset bộ lọc về Tất cả khi mở món mới
+    setStarFilter(null);
     const dishReviews = localReviewsMap[dish.id] || [];
     const myExisting = dishReviews.find((r) => r.reviewer_key === reviewerKey || (currentUser.email && r.reviewer_email === currentUser.email));
     if (myExisting) {
@@ -230,6 +253,7 @@ export function CompactDishGrid({
     const nextList = [optimistic, ...(localReviewsMap[selectedDish.id] || []).filter((r) => r.reviewer_key !== effectiveKey && !(currentUser.email && r.reviewer_email === currentUser.email))];
     setLocalReviewsMap((prev) => ({ ...prev, [selectedDish.id]: nextList }));
     syncDishStats(selectedDish.id, nextList);
+    emitInstantSync({ type: "review_upsert", review: optimistic });
     await onUpsertReview(fd); router.refresh();
   };
 
@@ -237,9 +261,11 @@ export function CompactDishGrid({
     e.preventDefault();
     if (!selectedDish) return;
     const fd = new FormData(e.currentTarget);
+    const effectiveKey = myReview?.reviewer_key || reviewerKey;
     const nextList = (localReviewsMap[selectedDish.id] || []).filter((r) => r.reviewer_key !== reviewerKey && !(currentUser.email && r.reviewer_email === currentUser.email));
     setLocalReviewsMap((prev) => ({ ...prev, [selectedDish.id]: nextList }));
     syncDishStats(selectedDish.id, nextList);
+    emitInstantSync({ type: "review_delete", dish_id: selectedDish.id, reviewer_key: effectiveKey });
     await onDeleteReview(fd); router.refresh();
   };
 
@@ -248,7 +274,6 @@ export function CompactDishGrid({
   const currentDishReviews = selectedDish ? localReviewsMap[selectedDish.id] || [] : [];
   const myReview = currentDishReviews.find((r) => r.reviewer_key === reviewerKey || (currentUser.email && r.reviewer_email === currentUser.email));
 
-  // Đếm số lượng đánh giá theo từng mức sao (5 sao -> 1 sao)
   const starCounts: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
   currentDishReviews.forEach((r) => {
     const s = Math.min(5, Math.max(1, Math.round(Number(r.rating || 5))));
@@ -260,39 +285,66 @@ export function CompactDishGrid({
     : currentDishReviews.filter((r) => Math.round(Number(r.rating)) === starFilter);
 
   return (
-    <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 items-start">
-        {localDishes.map((dish) => (
-          <div key={dish.id} onClick={() => openDishModal(dish)} className="group cursor-pointer rounded-2xl border border-slate-200 hover:border-[#0F766E] bg-white p-4 transition-all hover:shadow-md flex flex-col justify-between gap-3">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-semibold text-slate-500">{dish.category_icon} {dish.category_name}</span>
-                <span className={`text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border ${getTierStyle(dish.dish_tier)}`}>
-                  Tier {dish.dish_tier} • {dish.average_rating ? `${dish.average_rating}⭐` : "Chưa có sao"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="font-bold text-base text-slate-900 group-hover:text-[#0F766E] transition line-clamp-1">{dish.name}</h3>
-                {dish.image_url && <span className="text-[10px] font-bold bg-teal-50 text-[#0F766E] px-2 py-0.5 rounded-md shrink-0">📷 Có ảnh</span>}
-              </div>
-              {dish.ingredient_tags?.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {dish.ingredient_tags.map((t: string) => <span key={t} className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">{t}</span>)}
-                </div>
-              )}
-            </div>
-            <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
-              <span className="font-extrabold text-[#0F766E] text-sm">{dish.price_vnd ? `${dish.price_vnd.toLocaleString("vi-VN")}đ` : "Theo phiếu ăn"}</span>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-semibold text-slate-500 group-hover:text-[#0F766E]">Xem & Lọc sao ({dish.review_count}) →</span>
-                <button type="button" onClick={(e) => { e.stopPropagation(); setLikedMap((p) => ({ ...p, [dish.id]: !p[dish.id] })); }} className={`p-1.5 rounded-xl border cursor-pointer ${likedMap[dish.id] ? "bg-rose-50 border-rose-200 text-rose-600" : "border-slate-200 text-slate-400"}`}>
-                  <Heart className={`w-3.5 h-3.5 ${likedMap[dish.id] ? "fill-rose-500" : ""}`} />
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+    <div className="space-y-4">
+      {/* Ô TÌM KIẾM MÓN ĂN GÕ TỪNG CHỮ */}
+      <div className="relative">
+        <Search className="w-4 h-4 text-[#0F766E] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input
+          type="text"
+          value={dishSearchQuery}
+          onChange={(e) => setDishSearchQuery(e.target.value)}
+          placeholder="Gõ tên món ăn bất kỳ để lọc ngay từng chữ (VD: suon, com ga, hu tieu, chay...)"
+          className="w-full pl-10 pr-9 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-900 focus:bg-white transition"
+        />
+        {dishSearchQuery && (
+          <button
+            type="button"
+            onClick={() => setDishSearchQuery("")}
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-slate-200 text-slate-500 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
+
+      {visibleDishes.length === 0 ? (
+        <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs text-slate-500">
+          Không tìm thấy món ăn nào khớp với <strong>&ldquo;{dishSearchQuery}&rdquo;</strong>.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 items-start">
+          {visibleDishes.map((dish) => (
+            <div key={dish.id} onClick={() => openDishModal(dish)} className="group cursor-pointer rounded-2xl border border-slate-200 hover:border-[#0F766E] bg-white p-4 transition-all hover:shadow-md flex flex-col justify-between gap-3">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-slate-500">{dish.category_icon} {dish.category_name}</span>
+                  <span className={`text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border ${getTierStyle(dish.dish_tier)}`}>
+                    Tier {dish.dish_tier} • {dish.average_rating ? `${dish.average_rating}⭐` : "Chưa có sao"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-bold text-base text-slate-900 group-hover:text-[#0F766E] transition line-clamp-1">{dish.name}</h3>
+                  {dish.image_url && <span className="text-[10px] font-bold bg-teal-50 text-[#0F766E] px-2 py-0.5 rounded-md shrink-0">📷 Có ảnh</span>}
+                </div>
+                {dish.ingredient_tags?.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {dish.ingredient_tags.map((t: string) => <span key={t} className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">{t}</span>)}
+                  </div>
+                )}
+              </div>
+              <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                <span className="font-extrabold text-[#0F766E] text-sm">{dish.price_vnd ? `${dish.price_vnd.toLocaleString("vi-VN")}đ` : "Theo phiếu ăn"}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-slate-500 group-hover:text-[#0F766E]">Xem & Lọc sao ({dish.review_count}) →</span>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); setLikedMap((p) => ({ ...p, [dish.id]: !p[dish.id] })); }} className={`p-1.5 rounded-xl border cursor-pointer ${likedMap[dish.id] ? "bg-rose-50 border-rose-200 text-rose-600" : "border-slate-200 text-slate-400"}`}>
+                    <Heart className={`w-3.5 h-3.5 ${likedMap[dish.id] ? "fill-rose-500" : ""}`} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {selectedDish && (
         <div onClick={() => setSelectedDishId(null)} className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
@@ -320,7 +372,6 @@ export function CompactDishGrid({
               <p className="text-slate-600"><strong>Mô tả:</strong> {selectedDish.description || "Món ăn phục vụ tại căn tin nhà trường."}</p>
             </div>
 
-            {/* FORM CHẤM SAO */}
             <div className="rounded-2xl border-2 border-teal-600/20 bg-teal-50/30 p-4 space-y-3 text-xs">
               <div className="flex items-center justify-between">
                 <span className="font-extrabold text-slate-900 text-sm">{myReview ? `✅ Bạn đã chấm ${myReview.rating}⭐` : "⭐ Đánh giá món ăn này"}</span>
@@ -378,7 +429,6 @@ export function CompactDishGrid({
               </form>
             </div>
 
-            {/* BỘ LỌC PHÂN LOẠI SAO (5⭐ -> 1⭐) & DANH SÁCH ĐÁNH GIÁ */}
             <div className="space-y-3 pt-2 border-t border-slate-100 text-xs">
               <div className="flex items-center justify-between">
                 <span className="font-extrabold text-slate-900 flex items-center gap-1.5">
@@ -392,19 +442,13 @@ export function CompactDishGrid({
                 )}
               </div>
 
-              {/* Thanh thống kê tỷ lệ 5 sao -> 1 sao (Bấm vào thanh cũng lọc luôn) */}
               <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200/80 space-y-1.5">
                 {[5, 4, 3, 2, 1].map((starLevel) => {
                   const count = starCounts[starLevel] || 0;
                   const pct = currentDishReviews.length > 0 ? Math.round((count / currentDishReviews.length) * 100) : 0;
                   const isSelected = starFilter === starLevel;
                   return (
-                    <button
-                      key={starLevel}
-                      type="button"
-                      onClick={() => setStarFilter(isSelected ? null : starLevel)}
-                      className={`w-full flex items-center gap-2.5 px-2 py-1 rounded-xl transition cursor-pointer ${isSelected ? "bg-teal-50 ring-1 ring-[#0F766E]" : "hover:bg-slate-100"}`}
-                    >
+                    <button key={starLevel} type="button" onClick={() => setStarFilter(isSelected ? null : starLevel)} className={`w-full flex items-center gap-2.5 px-2 py-1 rounded-xl transition cursor-pointer ${isSelected ? "bg-teal-50 ring-1 ring-[#0F766E]" : "hover:bg-slate-100"}`}>
                       <span className="w-10 text-left font-extrabold text-slate-700">{starLevel} ⭐</span>
                       <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
                         <div className="h-full bg-[#F59E0B] rounded-full transition-all duration-300" style={{ width: `${pct}%` }} />
@@ -415,42 +459,24 @@ export function CompactDishGrid({
                 })}
               </div>
 
-              {/* Dãy nút bấm lọc nhanh 5 sao, 4 sao, 3 sao, 2 sao, 1 sao */}
               <div className="flex items-center gap-1.5 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => setStarFilter(null)}
-                  className={`px-3 py-1.5 rounded-xl font-extrabold text-[11px] border transition cursor-pointer ${starFilter === null ? "bg-[#0F766E] text-white border-[#0F766E]" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}
-                >
+                <button type="button" onClick={() => setStarFilter(null)} className={`px-3 py-1.5 rounded-xl font-extrabold text-[11px] border transition cursor-pointer ${starFilter === null ? "bg-[#0F766E] text-white border-[#0F766E]" : "bg-white text-slate-600 border-slate-200"}`}>
                   Tất cả ({currentDishReviews.length})
                 </button>
                 {[5, 4, 3, 2, 1].map((starLevel) => {
                   const count = starCounts[starLevel] || 0;
                   const active = starFilter === starLevel;
                   return (
-                    <button
-                      key={starLevel}
-                      type="button"
-                      onClick={() => setStarFilter(active ? null : starLevel)}
-                      className={`px-3 py-1.5 rounded-xl font-extrabold text-[11px] border transition cursor-pointer ${active ? "bg-amber-400 text-slate-950 border-amber-500 shadow-2xs" : "bg-white text-slate-700 border-slate-200 hover:bg-amber-50/50"}`}
-                    >
+                    <button key={starLevel} type="button" onClick={() => setStarFilter(active ? null : starLevel)} className={`px-3 py-1.5 rounded-xl font-extrabold text-[11px] border transition cursor-pointer ${active ? "bg-amber-400 text-slate-950 border-amber-500" : "bg-white text-slate-700 border-slate-200"}`}>
                       {starLevel} ⭐ ({count})
                     </button>
                   );
                 })}
               </div>
 
-              {/* Danh sách bình luận sau khi lọc theo số sao */}
               {filteredReviews.length === 0 ? (
-                <div className="text-center py-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-1">
-                  <p className="text-slate-500 font-bold">
-                    {starFilter !== null ? `Chưa có ai chấm ${starFilter}⭐ cho món này.` : "Chưa có nhận xét nào."}
-                  </p>
-                  {starFilter !== null && (
-                    <button type="button" onClick={() => setStarFilter(null)} className="text-[11px] font-bold text-[#0F766E] underline cursor-pointer">
-                      Bấm để xem lại toàn bộ các mức sao khác
-                    </button>
-                  )}
+                <div className="text-center py-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                  <p className="text-slate-500 font-bold">{starFilter !== null ? `Chưa có ai chấm ${starFilter}⭐ cho món này.` : "Chưa có nhận xét nào."}</p>
                 </div>
               ) : (
                 <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
@@ -463,11 +489,7 @@ export function CompactDishGrid({
                           {rev.tags?.[0] && <span className="text-[10px] font-bold bg-teal-50 text-[#0F766E] px-2 py-0.5 rounded">{rev.tags[0]}</span>}
                         </div>
                       </div>
-                      {rev.body ? (
-                        <p className="text-slate-700 pl-8">{rev.body}</p>
-                      ) : (
-                        <p className="text-slate-400 italic text-[11px] pl-8">(Chỉ chấm {rev.rating}⭐ không kèm lời nhắn)</p>
-                      )}
+                      {rev.body ? <p className="text-slate-700 pl-8">{rev.body}</p> : <p className="text-slate-400 italic text-[11px] pl-8">(Chỉ chấm {rev.rating}⭐)</p>}
                     </div>
                   ))}
                 </div>
@@ -476,7 +498,7 @@ export function CompactDishGrid({
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -607,7 +629,7 @@ export function CopyWeeklyPicksButton({ summaryText }: { summaryText: string }) 
 }
 
 // ============================================================================
-// 3. DIỄN ĐÀN (FORUM): TỰ CUỘN TIN NHẮN MỚI + HOÀNG ĐẾ XÓA SỔ + EMOJI
+// 3. DIỄN ĐÀN (FORUM): TỰ CUỘN TIN NHẮN MỚI + ĐỒNG BỘ ĐIỂM THỰC THẦN TỨC THÌ
 // ============================================================================
 const EMOJI_LIST = ["❤️", "😂", "🔥", "🤤", "😢"];
 
@@ -676,7 +698,9 @@ export function ForumSectionClient({
     <div className="space-y-5">
       <form onSubmit={async (e) => {
         e.preventDefault(); const fd = new FormData(e.currentTarget); const tempId = "temp_" + Date.now();
-        setLocalPosts((p) => [{ id: tempId, author_name: currentUser.displayName || guestAuthor || "Học sinh", author_email: currentUser.email, author_avatar: currentUser.avatarUrl, author_badge: currentUser.roleBadge, title: postTitle, body: postBody, image_url: imageUrl || null, reactions: {} }, ...p]);
+        const newPost = { id: tempId, author_name: currentUser.displayName || guestAuthor || "Học sinh", author_email: currentUser.email, author_avatar: currentUser.avatarUrl, author_badge: currentUser.roleBadge, title: postTitle, body: postBody, image_url: imageUrl || null, reactions: {} };
+        setLocalPosts((p) => [newPost, ...p]);
+        emitInstantSync({ type: "post_create", post: newPost });
         setOpenCommentPostId(tempId); setPostTitle(""); setPostBody(""); setImageUrl(""); await onCreatePost(fd); router.refresh();
       }} onPaste={(e) => { for (const item of Array.from(e.clipboardData?.items || [])) if (item.type.startsWith("image/")) { const f = item.getAsFile(); if (f) handleUploadFile(f); } }} className="bg-slate-50 rounded-3xl border border-slate-200 p-4 sm:p-5 space-y-3.5 text-xs">
         <input type="hidden" name="image_url" value={imageUrl} />
@@ -723,7 +747,7 @@ export function ForumSectionClient({
                   <h3 className="font-extrabold text-base text-slate-900">{post.title}</h3>
                 </div>
                 {canDeletePost && (
-                  <form onSubmit={async (e) => { e.preventDefault(); const fd = new FormData(e.currentTarget); setLocalPosts((p) => p.filter((x) => x.id !== post.id)); await onDeletePost(fd); router.refresh(); }}>
+                  <form onSubmit={async (e) => { e.preventDefault(); const fd = new FormData(e.currentTarget); setLocalPosts((p) => p.filter((x) => x.id !== post.id)); emitInstantSync({ type: "post_delete", post_id: post.id }); await onDeletePost(fd); router.refresh(); }}>
                     <input type="hidden" name="post_id" value={post.id} />
                     <button type="submit" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-red-600 hover:bg-red-50 font-bold text-[11px] cursor-pointer"><Trash2 className="w-3.5 h-3.5" /> Xóa bài</button>
                   </form>
@@ -760,7 +784,7 @@ export function ForumSectionClient({
                               <div className="flex items-center gap-1.5">
                                 <button type="button" onClick={() => { setReplyingToMap((p) => ({ ...p, [post.id]: c.author_name || "Học sinh" })); setTimeout(() => commentInputRefs.current[post.id]?.focus(), 50); }} className="text-[11px] font-bold text-slate-500 hover:text-[#0F766E] px-2 py-0.5 rounded-lg cursor-pointer"><Reply className="w-3 h-3 inline mr-1" />Trả lời</button>
                                 {canDel && (
-                                  <form onSubmit={async (e) => { e.preventDefault(); const fd = new FormData(e.currentTarget); const role = currentUser.isGod ? "god" : currentUser.canManageSchool && !isOwner ? "admin" : "self"; setLocalCommentsMap((p) => ({ ...p, [post.id]: (p[post.id] || []).map((x) => x.id === c.id ? { ...x, deleted_by_role: role } : x) })); await onDeleteComment(fd); router.refresh(); }}>
+                                  <form onSubmit={async (e) => { e.preventDefault(); const fd = new FormData(e.currentTarget); const role = currentUser.isGod ? "god" : currentUser.canManageSchool && !isOwner ? "admin" : "self"; setLocalCommentsMap((p) => ({ ...p, [post.id]: (p[post.id] || []).map((x) => x.id === c.id ? { ...x, deleted_by_role: role } : x) })); emitInstantSync({ type: "comment_delete", comment_id: c.id, role }); await onDeleteComment(fd); router.refresh(); }}>
                                     <input type="hidden" name="comment_id" value={c.id} />
                                     <button type="submit" className="text-[11px] font-bold text-red-600 px-2 py-0.5 rounded-lg cursor-pointer">{isOwner && !currentUser.isGod && !currentUser.canManageSchool ? <><Undo2 className="w-3 h-3 inline mr-1" />Thu hồi</> : <><Trash2 className="w-3 h-3 inline mr-1" />Xóa</>}</button>
                                   </form>
@@ -797,7 +821,9 @@ export function ForumSectionClient({
                   )}
                   <form onSubmit={async (e) => {
                     e.preventDefault(); const fd = new FormData(e.currentTarget); const txt = (commentInputMap[post.id] || "").trim(); if (!txt) return;
-                    setLocalCommentsMap((p) => ({ ...p, [post.id]: [...(p[post.id] || []), { id: "temp_" + Date.now(), post_id: post.id, author_name: currentUser.displayName || String(fd.get("author_name") || "Học sinh"), author_email: currentUser.email, author_avatar: currentUser.avatarUrl, author_badge: currentUser.roleBadge, reply_to_name: activeReply || null, body: txt, reactions: {} }] }));
+                    const newCmt = { id: "temp_" + Date.now(), post_id: post.id, author_name: currentUser.displayName || String(fd.get("author_name") || "Học sinh"), author_email: currentUser.email, author_avatar: currentUser.avatarUrl, author_badge: currentUser.roleBadge, reply_to_name: activeReply || null, body: txt, reactions: {} };
+                    setLocalCommentsMap((p) => ({ ...p, [post.id]: [...(p[post.id] || []), newCmt] }));
+                    emitInstantSync({ type: "comment_create", comment: newCmt });
                     setCommentInputMap((p) => ({ ...p, [post.id]: "" })); setReplyingToMap((p) => ({ ...p, [post.id]: "" })); scrollToBottom(post.id); await onCreateComment(fd); router.refresh();
                   }} className="flex flex-col sm:flex-row gap-2 pt-1">
                     <input type="hidden" name="post_id" value={post.id} />

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Flame, Star, MessageSquare, Award, Plus, X, Crown } from "lucide-react";
+import { Flame, Star, MessageSquare, Award, Plus, X } from "lucide-react";
+import { createBrowserSupabaseClient } from "@/app/lib/supabase/client";
 import type { CurrentUserClientInfo, CustomRoleOption, EnrichedProfileMap } from "./InteractiveClient";
 
 export function TopFoodiesBoard({
@@ -13,13 +14,79 @@ export function TopFoodiesBoard({
   onAssignRole?: (fd: FormData) => Promise<void>; onRevokeRole?: (fd: FormData) => Promise<void>;
 }) {
   const router = useRouter();
-  const [selectedUser, setSelectedUser] = useState<any | null>(null);
+  const [localReviews, setLocalReviews] = useState<any[]>(reviews ?? []);
+  const [localPosts, setLocalPosts] = useState<any[]>(posts ?? []);
+  const [localComments, setLocalComments] = useState<any[]>(comments ?? []);
+  const [localProfileMap, setLocalProfileMap] = useState<EnrichedProfileMap>(profileMap ?? {});
+
+  const [selectedUserKey, setSelectedUserKey] = useState<string | null>(null);
   const [selectedRoleId, setSelectedRoleId] = useState<string>(allCustomRoles[0]?.id || "");
   const [toast, setToast] = useState<string | null>(null);
 
-  // Chỉ tính các đánh giá và bình luận thuộc về trường hiện tại
+  useEffect(() => { setLocalReviews(reviews ?? []); }, [reviews]);
+  useEffect(() => { setLocalPosts(posts ?? []); }, [posts]);
+  useEffect(() => { setLocalComments(comments ?? []); }, [comments]);
+  useEffect(() => { setLocalProfileMap(profileMap ?? {}); }, [profileMap]);
+  useEffect(() => { if (!selectedRoleId && allCustomRoles.length > 0) setSelectedRoleId(allCustomRoles[0].id); }, [allCustomRoles, selectedRoleId]);
+
+  // 1. Bắt sự kiện tức thì (0.01s) khi người dùng chấm sao, đăng bài, chat hoặc đổi Role ngay trên trang
+  useEffect(() => {
+    const handleInstantUpdate = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail) return;
+
+      if (detail.type === "review_upsert") {
+        setLocalReviews((prev) => [
+          detail.review,
+          ...prev.filter((r) => !(r.dish_id === detail.review.dish_id && r.reviewer_key === detail.review.reviewer_key)),
+        ]);
+      } else if (detail.type === "review_delete") {
+        setLocalReviews((prev) => prev.filter((r) => !(r.dish_id === detail.dish_id && r.reviewer_key === detail.reviewer_key)));
+      } else if (detail.type === "post_create") {
+        setLocalPosts((prev) => [detail.post, ...prev]);
+      } else if (detail.type === "post_delete") {
+        setLocalPosts((prev) => prev.filter((p) => p.id !== detail.post_id));
+      } else if (detail.type === "comment_create") {
+        setLocalComments((prev) => [...prev, detail.comment]);
+      } else if (detail.type === "comment_delete") {
+        setLocalComments((prev) => prev.map((c) => c.id === detail.comment_id ? { ...c, deleted_by_role: detail.role } : c));
+      } else if (detail.type === "role_assign") {
+        const em = detail.email?.toLowerCase().trim();
+        if (!em || !detail.role) return;
+        setLocalProfileMap((prev) => {
+          const cur = prev[em] || { roles: [] };
+          const exists = (cur.roles || []).some((r) => r.id === detail.role.id);
+          return { ...prev, [em]: { ...cur, roles: exists ? cur.roles : [...(cur.roles || []), detail.role] } };
+        });
+      } else if (detail.type === "role_revoke") {
+        const em = detail.email?.toLowerCase().trim();
+        if (!em) return;
+        setLocalProfileMap((prev) => {
+          const cur = prev[em] || { roles: [] };
+          return { ...prev, [em]: { ...cur, roles: (cur.roles || []).filter((r) => r.id !== detail.role_id) } };
+        });
+      }
+    };
+
+    window.addEventListener("foodhub:instant-sync", handleInstantUpdate);
+    return () => window.removeEventListener("foodhub:instant-sync", handleInstantUpdate);
+  }, []);
+
+  // 2. Đồng bộ Realtime từ Supabase khi người khác ở máy khác thao tác
+  useEffect(() => {
+    const supabase = createBrowserSupabaseClient();
+    const ch = supabase
+      .channel("foodhub_leaderboard_realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "reviews" }, () => router.refresh())
+      .on("postgres_changes", { event: "*", schema: "public", table: "forum_posts" }, () => router.refresh())
+      .on("postgres_changes", { event: "*", schema: "public", table: "forum_comments" }, () => router.refresh())
+      .on("postgres_changes", { event: "*", schema: "public", table: "user_role_assignments" }, () => router.refresh())
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [router]);
+
   const schoolDishIds = new Set((schoolDishes ?? []).map((d) => d.id));
-  const schoolPostIds = new Set((posts ?? []).map((p) => p.id));
+  const schoolPostIds = new Set((localPosts ?? []).map((p) => p.id));
 
   const statsMap = new Map<string, {
     key: string; email: string | null; name: string; avatar: string | null; systemBadge: string | null;
@@ -28,12 +95,12 @@ export function TopFoodiesBoard({
 
   const addStat = (emailRaw: string | null, nameRaw: string | null, avatarRaw: string | null, badgeRaw: string | null, type: "review" | "post" | "comment") => {
     const email = emailRaw?.toLowerCase().trim() || null;
-    const name = (email && profileMap[email]?.display_name) || nameRaw?.trim() || "Học sinh";
+    const name = (email && localProfileMap[email]?.display_name) || nameRaw?.trim() || "Học sinh";
     const key = email || `guest_${name.toLowerCase()}`;
 
     const cur = statsMap.get(key) || {
       key, email, name,
-      avatar: (email && profileMap[email]?.avatar_url) || avatarRaw || null,
+      avatar: (email && localProfileMap[email]?.avatar_url) || avatarRaw || null,
       systemBadge: badgeRaw || null,
       reviewCount: 0, postCount: 0, commentCount: 0, score: 0,
     };
@@ -44,21 +111,45 @@ export function TopFoodiesBoard({
     statsMap.set(key, cur);
   };
 
-  (reviews ?? []).forEach((r) => {
+  localReviews.forEach((r) => {
     if (schoolDishIds.has(r.dish_id)) addStat(r.reviewer_email, r.reviewer_name, r.reviewer_avatar, r.reviewer_badge, "review");
   });
-  (posts ?? []).forEach((p) => {
+  localPosts.forEach((p) => {
     addStat(p.author_email, p.author_name, p.author_avatar, p.author_badge, "post");
   });
-  (comments ?? []).forEach((c) => {
+  localComments.forEach((c) => {
     if (schoolPostIds.has(c.post_id) && !c.deleted_by_role) addStat(c.author_email, c.author_name, c.author_avatar, c.author_badge, "comment");
   });
 
-  const topMembers = Array.from(statsMap.values())
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 6);
-
+  const topMembers = Array.from(statsMap.values()).sort((a, b) => b.score - a.score).slice(0, 6);
+  const selectedUser = selectedUserKey ? statsMap.get(selectedUserKey) || null : null;
   const canAdminAssign = Boolean((currentUser?.isGod || currentUser?.canManageSchool) && onAssignRole);
+
+  const handleInstantAssign = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUser?.email || !selectedRoleId || !onAssignRole) return;
+    const chosenRole = allCustomRoles.find((r) => r.id === selectedRoleId);
+    if (chosenRole) {
+      window.dispatchEvent(new CustomEvent("foodhub:instant-sync", {
+        detail: { type: "role_assign", email: selectedUser.email, role: chosenRole },
+      }));
+    }
+    setToast(`✨ Đã cấp Role "${chosenRole?.name}"!`);
+    setTimeout(() => setToast(null), 2000);
+    const fd = new FormData(); fd.set("user_email", selectedUser.email); fd.set("role_id", selectedRoleId);
+    await onAssignRole(fd); router.refresh();
+  };
+
+  const handleInstantRevoke = async (email: string, roleId: string, roleName: string) => {
+    if (!onRevokeRole) return;
+    window.dispatchEvent(new CustomEvent("foodhub:instant-sync", {
+      detail: { type: "role_revoke", email, role_id: roleId },
+    }));
+    setToast(`Đã gỡ Role "${roleName}"`);
+    setTimeout(() => setToast(null), 2000);
+    const fd = new FormData(); fd.set("user_email", email); fd.set("role_id", roleId);
+    await onRevokeRole(fd); router.refresh();
+  };
 
   const rankStyles = [
     { badge: "🥇 TOP 1", border: "border-amber-300 bg-gradient-to-br from-amber-50/90 to-white" },
@@ -68,19 +159,13 @@ export function TopFoodiesBoard({
 
   return (
     <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-2xs text-xs">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center">
-            <Flame className="w-5 h-5 fill-rose-500" />
-          </div>
-          <div>
-            <h2 className="font-bold text-base text-slate-900">
-              Bảng Vinh Danh Top Thực Thần — {schoolShortName}
-            </h2>
-            <p className="text-xs text-slate-500">
-              Xếp hạng học sinh tích cực chấm sao (+3đ), đăng bài (+2đ) & thảo luận (+1đ) • Bấm vào thẻ để xem Profile
-            </p>
-          </div>
+      <div className="flex items-center gap-2.5">
+        <div className="w-9 h-9 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center">
+          <Flame className="w-5 h-5 fill-rose-500" />
+        </div>
+        <div>
+          <h2 className="font-bold text-base text-slate-900">Bảng Vinh Danh Top Thực Thần — {schoolShortName}</h2>
+          <p className="text-xs text-slate-500">Tự động nhảy điểm tức thì khi chấm sao (+3đ), đăng bài (+2đ) & chat (+1đ)</p>
         </div>
       </div>
 
@@ -89,17 +174,12 @@ export function TopFoodiesBoard({
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
           {topMembers.map((m, idx) => {
-            const enriched = m.email ? profileMap[m.email] : undefined;
-            const roles = enriched?.roles || [];
+            const roles = (m.email && localProfileMap[m.email]?.roles) || [];
             const isGod = m.email === "nguyenphutrong11102010@gmail.com" || m.systemBadge?.includes("GOD");
             const style = rankStyles[idx] || { badge: `#${idx + 1}`, border: "border-slate-200 bg-slate-50/50" };
 
             return (
-              <div
-                key={m.key}
-                onClick={() => setSelectedUser(m)}
-                className={`p-3.5 rounded-2xl border ${style.border} flex flex-col justify-between gap-3 cursor-pointer hover:shadow-md transition`}
-              >
+              <div key={m.key} onClick={() => setSelectedUserKey(m.key)} className={`p-3.5 rounded-2xl border ${style.border} flex flex-col justify-between gap-3 cursor-pointer hover:shadow-md transition`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2.5">
                     {m.avatar ? (
@@ -136,9 +216,8 @@ export function TopFoodiesBoard({
         </div>
       )}
 
-      {/* Popup xem Profile & Cấp Role nhanh khi bấm vào thành viên trên Bảng Vinh Danh */}
       {selectedUser && (
-        <div onClick={() => setSelectedUser(null)} className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div onClick={() => setSelectedUserKey(null)} className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-3xl border border-slate-200 max-w-sm w-full p-5 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-3">
@@ -147,24 +226,26 @@ export function TopFoodiesBoard({
                 </div>
                 <div>
                   <h3 className="font-extrabold text-base text-slate-900">{selectedUser.name}</h3>
-                  <p className="text-[11px] text-[#0F766E] font-bold">🔥 Tổng điểm cống hiến: {selectedUser.score} điểm</p>
+                  <p className="text-[11px] text-[#0F766E] font-bold">🔥 Điểm cống hiến: {selectedUser.score} điểm</p>
                 </div>
               </div>
-              <button type="button" onClick={() => setSelectedUser(null)} className="p-1.5 rounded-full bg-slate-100 text-slate-600 cursor-pointer"><X className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setSelectedUserKey(null)} className="p-1.5 rounded-full bg-slate-100 text-slate-600 cursor-pointer"><X className="w-4 h-4" /></button>
             </div>
 
-            <p className="text-slate-600 bg-slate-50 p-3 rounded-2xl border border-slate-200/80">
-              &ldquo;{(selectedUser.email && profileMap[selectedUser.email]?.bio) || "Thành viên năng nổ của căn tin trường 🍱"}&rdquo;
-            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {((selectedUser.email && localProfileMap[selectedUser.email]?.roles) || []).map((r) => (
+                <span key={r.id} style={{ backgroundColor: r.bg_color, color: r.text_color }} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-extrabold text-[11px]">
+                  <span>{r.name}</span>
+                  {canAdminAssign && selectedUser.email && (
+                    <button type="button" onClick={() => handleInstantRevoke(selectedUser.email!, r.id, r.name)} className="hover:opacity-70 cursor-pointer"><X className="w-3 h-3" /></button>
+                  )}
+                </span>
+              ))}
+            </div>
 
             {canAdminAssign && selectedUser.email && allCustomRoles.length > 0 && (
-              <form onSubmit={async (e) => {
-                e.preventDefault(); if (!onAssignRole) return;
-                const fd = new FormData(); fd.set("user_email", selectedUser.email); fd.set("role_id", selectedRoleId);
-                setToast("✨ Đã cấp Role thành công!"); setTimeout(() => setToast(null), 2000);
-                await onAssignRole(fd); router.refresh();
-              }} className="p-3 rounded-2xl bg-amber-50 border border-amber-200 space-y-2">
-                <span className="font-extrabold text-[11px] text-amber-900 flex items-center gap-1"><Award className="w-3.5 h-3.5" /> ⚡ Thưởng Role cho Thực Thần này:</span>
+              <form onSubmit={handleInstantAssign} className="p-3 rounded-2xl bg-amber-50 border border-amber-200 space-y-2">
+                <span className="font-extrabold text-[11px] text-amber-900 flex items-center gap-1"><Award className="w-3.5 h-3.5" /> ⚡ Thưởng Role tức thì:</span>
                 {toast && <p className="text-emerald-700 font-bold text-[11px]">{toast}</p>}
                 <div className="flex gap-1.5">
                   <select value={selectedRoleId} onChange={(e) => setSelectedRoleId(e.target.value)} className="flex-1 p-2 bg-white border border-amber-300 rounded-xl font-bold">
