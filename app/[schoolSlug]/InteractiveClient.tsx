@@ -649,11 +649,36 @@ export function ForumSectionClient({
   const [guestAuthor, setGuestAuthor] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [uploading, setUploading] = useState(false);
+
+  // Tìm kiếm gõ từng chữ & Danh sách ID bài Forum đã Yêu thích (giữ đúng thứ tự bấm)
+  const [forumSearch, setForumSearch] = useState("");
+  const [showOnlyFav, setShowOnlyFav] = useState(false);
+  const [favPostIds, setFavPostIds] = useState<string[]>([]);
+
   const [openCommentPostId, setOpenCommentPostId] = useState<string | null>(posts[0]?.id ?? null);
   const [replyingToMap, setReplyingToMap] = useState<Record<string, string>>({});
   const [commentInputMap, setCommentInputMap] = useState<Record<string, string>>({});
   const commentInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const commentsScrollRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const favStorageKey = `foodhub_fav_forums_${currentUser.email || "guest"}`;
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(favStorageKey);
+      if (saved) setFavPostIds(JSON.parse(saved));
+    } catch {}
+  }, [favStorageKey]);
+
+  // Bấm Yêu thích / Bỏ yêu thích: Cập nhật 0ms không cần reload & Xếp theo thứ tự yêu thích
+  const toggleFavoritePost = (postId: string) => {
+    setFavPostIds((prev) => {
+      const exists = prev.includes(postId);
+      const next = exists ? prev.filter((id) => id !== postId) : [...prev, postId];
+      try { localStorage.setItem(favStorageKey, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
 
   const scrollToBottom = (postId: string) => {
     setTimeout(() => {
@@ -694,8 +719,36 @@ export function ForumSectionClient({
     await onReactItem(fd); router.refresh();
   };
 
+  // Lọc theo từng chữ gõ vào + Sắp xếp bài Yêu thích lên đầu theo đúng thứ tự đã bấm
+  const q = normText(forumSearch);
+  const filteredAndSortedPosts = localPosts
+    .filter((post) => {
+      if (showOnlyFav && !favPostIds.includes(post.id)) return false;
+      if (!q) return true;
+      const postComments = localCommentsMap[post.id] || [];
+      const commentsText = postComments.map((c: any) => `${c.author_name} ${c.body}`).join(" ");
+      return (
+        normText(post.title).includes(q) ||
+        normText(post.body).includes(q) ||
+        normText(post.author_name).includes(q) ||
+        normText(commentsText).includes(q)
+      );
+    })
+    .sort((a, b) => {
+      const favIndexA = favPostIds.indexOf(a.id);
+      const favIndexB = favPostIds.indexOf(b.id);
+      const isFavA = favIndexA !== -1;
+      const isFavB = favIndexB !== -1;
+
+      if (isFavA && isFavB) return favIndexA - favIndexB; // Giữ đúng thứ tự yêu thích #1, #2, #3...
+      if (isFavA) return -1; // Bài yêu thích luôn nằm trên đầu
+      if (isFavB) return 1;
+      return 0;
+    });
+
   return (
     <div className="space-y-5">
+      {/* KHUNG ĐĂNG BÀI VIẾT MỚI */}
       <form onSubmit={async (e) => {
         e.preventDefault(); const fd = new FormData(e.currentTarget); const tempId = "temp_" + Date.now();
         const newPost = { id: tempId, author_name: currentUser.displayName || guestAuthor || "Học sinh", author_email: currentUser.email, author_avatar: currentUser.avatarUrl, author_badge: currentUser.roleBadge, title: postTitle, body: postBody, image_url: imageUrl || null, reactions: {} };
@@ -732,112 +785,185 @@ export function ForumSectionClient({
         </div>
       </form>
 
-      <div className="space-y-4">
-        {localPosts.map((post: any) => {
-          const comments = localCommentsMap[post.id] || [];
-          const isOpen = openCommentPostId === post.id;
-          const canDeletePost = currentUser.isGod || currentUser.canManageSchool || (currentUser.email && post.author_email && currentUser.email === post.author_email.toLowerCase().trim());
-          const activeReply = replyingToMap[post.id] || "";
+      {/* THANH TÌM KIẾM FORUM GÕ TỪNG CHỮ + BỘ LỌC YÊU THÍCH */}
+      <div className="flex flex-col sm:flex-row gap-2.5 text-xs">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 text-[#0F766E] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            value={forumSearch}
+            onChange={(e) => setForumSearch(e.target.value)}
+            placeholder="Tìm nhanh chủ đề, nội dung hoặc tên người đăng trong Forum (gõ từng chữ)..."
+            className="w-full pl-10 pr-9 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 font-semibold text-slate-900 focus:bg-white transition"
+          />
+          {forumSearch && (
+            <button type="button" onClick={() => setForumSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-slate-200 text-slate-500 cursor-pointer">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
 
-          return (
-            <div key={post.id} className="p-5 rounded-3xl border border-slate-200 bg-white space-y-3.5 text-xs shadow-2xs">
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-1.5">
-                  <UserIdentityBadge name={post.author_name || "Học sinh"} email={post.author_email} avatar={post.author_avatar} systemBadge={post.author_badge} profileMap={profileMap} currentUser={currentUser} allCustomRoles={allCustomRoles} onAssignRole={onAssignRole} onRevokeRole={onRevokeRole} size="md" />
-                  <h3 className="font-extrabold text-base text-slate-900">{post.title}</h3>
-                </div>
-                {canDeletePost && (
-                  <form onSubmit={async (e) => { e.preventDefault(); const fd = new FormData(e.currentTarget); setLocalPosts((p) => p.filter((x) => x.id !== post.id)); emitInstantSync({ type: "post_delete", post_id: post.id }); await onDeletePost(fd); router.refresh(); }}>
-                    <input type="hidden" name="post_id" value={post.id} />
-                    <button type="submit" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-red-600 hover:bg-red-50 font-bold text-[11px] cursor-pointer"><Trash2 className="w-3.5 h-3.5" /> Xóa bài</button>
-                  </form>
-                )}
-              </div>
-              <p className="text-slate-700 text-[13px]">{post.body}</p>
-              {post.image_url && <img src={post.image_url} alt={post.title} className="max-h-72 rounded-2xl border object-cover" />}
-              <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {EMOJI_LIST.map((em) => {
-                    const cnt = Number(post.reactions?.[em] || 0);
-                    return <button key={em} type="button" onClick={() => handleReaction("post", post.id, em)} className={`px-2.5 py-1 rounded-full text-xs font-bold border cursor-pointer ${cnt > 0 ? "bg-teal-50 border-teal-200 text-[#0F766E]" : "bg-slate-50 border-slate-200 text-slate-500"}`}>{em} {cnt > 0 && cnt}</button>;
-                  })}
-                </div>
-                <button type="button" onClick={() => { const next = isOpen ? null : post.id; setOpenCommentPostId(next); if (next) scrollToBottom(next); }} className="inline-flex items-center gap-1.5 font-extrabold text-[#0F766E] bg-teal-50/70 px-3.5 py-1.5 rounded-full cursor-pointer">
-                  <MessageCircle className="w-4 h-4" /> <span>{isOpen ? `Thu gọn (${comments.length})` : `💬 Thảo luận (${comments.length})`}</span>
-                </button>
-              </div>
+        <button
+          type="button"
+          onClick={() => setShowOnlyFav(!showOnlyFav)}
+          className={`px-4 py-2.5 rounded-2xl font-extrabold inline-flex items-center justify-center gap-1.5 border transition cursor-pointer shrink-0 ${
+            showOnlyFav
+              ? "bg-amber-400 text-slate-950 border-amber-500 shadow-2xs"
+              : "bg-white text-slate-700 border-slate-200 hover:bg-amber-50/60"
+          }`}
+        >
+          <Star className={`w-4 h-4 ${showOnlyFav ? "fill-slate-950" : "text-amber-500 fill-amber-400"}`} />
+          <span>Đã yêu thích ({favPostIds.filter((id) => localPosts.some((p) => p.id === id)).length})</span>
+        </button>
+      </div>
 
-              {isOpen && (
-                <div className="bg-slate-50 rounded-3xl p-4 border border-slate-200/90 space-y-3.5">
-                  <div ref={(el) => { commentsScrollRefs.current[post.id] = el; }} className="space-y-2.5 max-h-80 overflow-y-auto pr-1 scroll-smooth">
-                    {comments.map((c: any) => {
-                      const isOwner = Boolean(currentUser.email && c.author_email && currentUser.email === c.author_email.toLowerCase().trim());
-                      const canDel = currentUser.isGod || currentUser.canManageSchool || isOwner;
-                      return (
-                        <div key={c.id} className="bg-white p-3 rounded-2xl border border-slate-200/80 space-y-2">
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <UserIdentityBadge name={c.author_name || "Học sinh"} email={c.author_email} avatar={c.author_avatar} systemBadge={c.author_badge} profileMap={profileMap} currentUser={currentUser} allCustomRoles={allCustomRoles} onAssignRole={onAssignRole} onRevokeRole={onRevokeRole} />
-                              {c.reply_to_name && !c.deleted_by_role && <span className="text-[11px] font-bold text-[#0F766E] bg-teal-50 px-2 py-0.5 rounded-lg">↩️ @{c.reply_to_name}</span>}
-                            </div>
-                            {!c.deleted_by_role && (
-                              <div className="flex items-center gap-1.5">
-                                <button type="button" onClick={() => { setReplyingToMap((p) => ({ ...p, [post.id]: c.author_name || "Học sinh" })); setTimeout(() => commentInputRefs.current[post.id]?.focus(), 50); }} className="text-[11px] font-bold text-slate-500 hover:text-[#0F766E] px-2 py-0.5 rounded-lg cursor-pointer"><Reply className="w-3 h-3 inline mr-1" />Trả lời</button>
-                                {canDel && (
-                                  <form onSubmit={async (e) => { e.preventDefault(); const fd = new FormData(e.currentTarget); const role = currentUser.isGod ? "god" : currentUser.canManageSchool && !isOwner ? "admin" : "self"; setLocalCommentsMap((p) => ({ ...p, [post.id]: (p[post.id] || []).map((x) => x.id === c.id ? { ...x, deleted_by_role: role } : x) })); emitInstantSync({ type: "comment_delete", comment_id: c.id, role }); await onDeleteComment(fd); router.refresh(); }}>
-                                    <input type="hidden" name="comment_id" value={c.id} />
-                                    <button type="submit" className="text-[11px] font-bold text-red-600 px-2 py-0.5 rounded-lg cursor-pointer">{isOwner && !currentUser.isGod && !currentUser.canManageSchool ? <><Undo2 className="w-3 h-3 inline mr-1" />Thu hồi</> : <><Trash2 className="w-3 h-3 inline mr-1" />Xóa</>}</button>
-                                  </form>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          {c.deleted_by_role === "god" ? (
-                            <div className="p-2.5 rounded-xl bg-amber-100 border border-amber-300 text-amber-950 font-extrabold flex items-center gap-2"><Crown className="w-4 h-4 text-amber-600" /> (👑 Hoàng Đế đã xóa sổ tin nhắn này)</div>
-                          ) : c.deleted_by_role === "admin" ? (
-                            <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 font-bold flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-rose-600" /> (🛡️ Admin nhà trường đã xóa tin nhắn này)</div>
-                          ) : c.deleted_by_role === "self" ? (
-                            <p className="text-slate-400 italic pl-8">💨 Tin nhắn đã được chính chủ thu hồi.</p>
-                          ) : (
-                            <>
-                              <p className="text-slate-700 pl-8">{c.body}</p>
-                              <div className="pl-8 flex items-center gap-1 flex-wrap">
-                                {EMOJI_LIST.map((em) => {
-                                  const cnt = Number(c.reactions?.[em] || 0);
-                                  return <button key={em} type="button" onClick={() => handleReaction("comment", c.id, em, post.id)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border cursor-pointer ${cnt > 0 ? "bg-teal-50 border-teal-200 text-[#0F766E]" : "bg-slate-50 border-slate-200 text-slate-400"}`}>{em} {cnt > 0 && cnt}</button>;
-                                })}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      );
+      {/* DANH SÁCH CHỦ ĐỀ FORUM (ĐÃ XẾP BÀI YÊU THÍCH LÊN ĐẦU) */}
+      {filteredAndSortedPosts.length === 0 ? (
+        <div className="text-center py-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs text-slate-500">
+          {showOnlyFav ? "Bạn chưa đánh dấu Yêu thích bài Forum nào." : `Không tìm thấy bài thảo luận nào khớp với "${forumSearch}".`}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {filteredAndSortedPosts.map((post: any) => {
+            const comments = localCommentsMap[post.id] || [];
+            const isOpen = openCommentPostId === post.id;
+            const canDeletePost = currentUser.isGod || currentUser.canManageSchool || (currentUser.email && post.author_email && currentUser.email === post.author_email.toLowerCase().trim());
+            const activeReply = replyingToMap[post.id] || "";
+            const favOrder = favPostIds.indexOf(post.id);
+            const isFavorited = favOrder !== -1;
+
+            return (
+              <div
+                key={post.id}
+                className={`p-5 rounded-3xl border transition-all space-y-3.5 text-xs shadow-2xs ${
+                  isFavorited ? "border-amber-300 bg-gradient-to-br from-amber-50/40 via-white to-white ring-1 ring-amber-200/70" : "border-slate-200 bg-white"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {isFavorited && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-extrabold text-[10px] inline-flex items-center gap-1 shadow-2xs">
+                          ⭐ Yêu thích #{favOrder + 1}
+                        </span>
+                      )}
+                      <UserIdentityBadge name={post.author_name || "Học sinh"} email={post.author_email} avatar={post.author_avatar} systemBadge={post.author_badge} profileMap={profileMap} currentUser={currentUser} allCustomRoles={allCustomRoles} onAssignRole={onAssignRole} onRevokeRole={onRevokeRole} size="md" />
+                    </div>
+                    <h3 className="font-extrabold text-base text-slate-900">{post.title}</h3>
+                  </div>
+
+                  {/* Cụm nút Yêu thích (Ghim lên đầu) & Xóa bài */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => toggleFavoritePost(post.id)}
+                      title={isFavorited ? "Bỏ yêu thích" : "Yêu thích & Đẩy bài này lên đầu Forum"}
+                      className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl font-extrabold text-[11px] border transition cursor-pointer hover:scale-105 active:scale-95 ${
+                        isFavorited
+                          ? "bg-amber-100 border-amber-300 text-amber-900"
+                          : "bg-slate-50 border-slate-200 text-slate-600 hover:text-amber-700 hover:border-amber-200"
+                      }`}
+                    >
+                      <Star className={`w-3.5 h-3.5 ${isFavorited ? "fill-amber-500 text-amber-500" : ""}`} />
+                      <span>{isFavorited ? "Đã thích" : "Yêu thích"}</span>
+                    </button>
+
+                    {canDeletePost && (
+                      <form onSubmit={async (e) => { e.preventDefault(); const fd = new FormData(e.currentTarget); setLocalPosts((p) => p.filter((x) => x.id !== post.id)); emitInstantSync({ type: "post_delete", post_id: post.id }); await onDeletePost(fd); router.refresh(); }}>
+                        <input type="hidden" name="post_id" value={post.id} />
+                        <button type="submit" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-red-600 hover:bg-red-50 font-bold text-[11px] cursor-pointer"><Trash2 className="w-3.5 h-3.5" /> Xóa</button>
+                      </form>
+                    )}
+                  </div>
+                </div>
+
+                <p className="text-slate-700 text-[13px]">{post.body}</p>
+                {post.image_url && <img src={post.image_url} alt={post.title} className="max-h-72 rounded-2xl border object-cover" />}
+
+                <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {EMOJI_LIST.map((em) => {
+                      const cnt = Number(post.reactions?.[em] || 0);
+                      return <button key={em} type="button" onClick={() => handleReaction("post", post.id, em)} className={`px-2.5 py-1 rounded-full text-xs font-bold border cursor-pointer ${cnt > 0 ? "bg-teal-50 border-teal-200 text-[#0F766E]" : "bg-slate-50 border-slate-200 text-slate-500"}`}>{em} {cnt > 0 && cnt}</button>;
                     })}
                   </div>
-                  {activeReply && (
-                    <div className="flex items-center justify-between bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl text-[11px] font-bold text-[#0F766E]">
-                      <span>↩️ Đang trả lời @{activeReply}</span>
-                      <button type="button" onClick={() => setReplyingToMap((p) => ({ ...p, [post.id]: "" }))}><X className="w-3.5 h-3.5" /></button>
-                    </div>
-                  )}
-                  <form onSubmit={async (e) => {
-                    e.preventDefault(); const fd = new FormData(e.currentTarget); const txt = (commentInputMap[post.id] || "").trim(); if (!txt) return;
-                    const newCmt = { id: "temp_" + Date.now(), post_id: post.id, author_name: currentUser.displayName || String(fd.get("author_name") || "Học sinh"), author_email: currentUser.email, author_avatar: currentUser.avatarUrl, author_badge: currentUser.roleBadge, reply_to_name: activeReply || null, body: txt, reactions: {} };
-                    setLocalCommentsMap((p) => ({ ...p, [post.id]: [...(p[post.id] || []), newCmt] }));
-                    emitInstantSync({ type: "comment_create", comment: newCmt });
-                    setCommentInputMap((p) => ({ ...p, [post.id]: "" })); setReplyingToMap((p) => ({ ...p, [post.id]: "" })); scrollToBottom(post.id); await onCreateComment(fd); router.refresh();
-                  }} className="flex flex-col sm:flex-row gap-2 pt-1">
-                    <input type="hidden" name="post_id" value={post.id} />
-                    <input type="hidden" name="reply_to_name" value={activeReply} />
-                    {!currentUser.email && <input name="author_name" required placeholder="Tên bạn *" className="sm:w-36 p-2.5 bg-white border border-slate-200 rounded-xl font-semibold" />}
-                    <input ref={(el) => { commentInputRefs.current[post.id] = el; }} name="body" required value={commentInputMap[post.id] || ""} onChange={(e) => setCommentInputMap((p) => ({ ...p, [post.id]: e.target.value }))} placeholder={activeReply ? `Nhắn trả lời @${activeReply}...` : "Viết câu trả lời..."} className="flex-1 p-2.5 bg-white border border-slate-200 rounded-xl" />
-                    <button type="submit" className="px-4 py-2.5 bg-slate-900 text-white font-bold rounded-xl inline-flex items-center justify-center gap-1.5 cursor-pointer shrink-0"><Send className="w-3.5 h-3.5" /> Gửi</button>
-                  </form>
+                  <button type="button" onClick={() => { const next = isOpen ? null : post.id; setOpenCommentPostId(next); if (next) scrollToBottom(next); }} className="inline-flex items-center gap-1.5 font-extrabold text-[#0F766E] bg-teal-50/70 px-3.5 py-1.5 rounded-full cursor-pointer">
+                    <MessageCircle className="w-4 h-4" /> <span>{isOpen ? `Thu gọn (${comments.length})` : `💬 Thảo luận (${comments.length})`}</span>
+                  </button>
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+
+                {isOpen && (
+                  <div className="bg-slate-50 rounded-3xl p-4 border border-slate-200/90 space-y-3.5">
+                    <div ref={(el) => { commentsScrollRefs.current[post.id] = el; }} className="space-y-2.5 max-h-80 overflow-y-auto pr-1 scroll-smooth">
+                      {comments.map((c: any) => {
+                        const isOwner = Boolean(currentUser.email && c.author_email && currentUser.email === c.author_email.toLowerCase().trim());
+                        const canDel = currentUser.isGod || currentUser.canManageSchool || isOwner;
+                        return (
+                          <div key={c.id} className="bg-white p-3 rounded-2xl border border-slate-200/80 space-y-2">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <UserIdentityBadge name={c.author_name || "Học sinh"} email={c.author_email} avatar={c.author_avatar} systemBadge={c.author_badge} profileMap={profileMap} currentUser={currentUser} allCustomRoles={allCustomRoles} onAssignRole={onAssignRole} onRevokeRole={onRevokeRole} />
+                                {c.reply_to_name && !c.deleted_by_role && <span className="text-[11px] font-bold text-[#0F766E] bg-teal-50 px-2 py-0.5 rounded-lg">↩️ @{c.reply_to_name}</span>}
+                              </div>
+                              {!c.deleted_by_role && (
+                                <div className="flex items-center gap-1.5">
+                                  <button type="button" onClick={() => { setReplyingToMap((p) => ({ ...p, [post.id]: c.author_name || "Học sinh" })); setTimeout(() => commentInputRefs.current[post.id]?.focus(), 50); }} className="text-[11px] font-bold text-slate-500 hover:text-[#0F766E] px-2 py-0.5 rounded-lg cursor-pointer"><Reply className="w-3 h-3 inline mr-1" />Trả lời</button>
+                                  {canDel && (
+                                    <form onSubmit={async (e) => { e.preventDefault(); const fd = new FormData(e.currentTarget); const role = currentUser.isGod ? "god" : currentUser.canManageSchool && !isOwner ? "admin" : "self"; setLocalCommentsMap((p) => ({ ...p, [post.id]: (p[post.id] || []).map((x) => x.id === c.id ? { ...x, deleted_by_role: role } : x) })); emitInstantSync({ type: "comment_delete", comment_id: c.id, role }); await onDeleteComment(fd); router.refresh(); }}>
+                                      <input type="hidden" name="comment_id" value={c.id} />
+                                      <button type="submit" className="text-[11px] font-bold text-red-600 px-2 py-0.5 rounded-lg cursor-pointer">{isOwner && !currentUser.isGod && !currentUser.canManageSchool ? <><Undo2 className="w-3 h-3 inline mr-1" />Thu hồi</> : <><Trash2 className="w-3 h-3 inline mr-1" />Xóa</>}</button>
+                                    </form>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            {c.deleted_by_role === "god" ? (
+                              <div className="p-2.5 rounded-xl bg-amber-100 border border-amber-300 text-amber-950 font-extrabold flex items-center gap-2"><Crown className="w-4 h-4 text-amber-600" /> (👑 Hoàng Đế đã xóa sổ tin nhắn này)</div>
+                            ) : c.deleted_by_role === "admin" ? (
+                              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 font-bold flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-rose-600" /> (🛡️ Admin nhà trường đã xóa tin nhắn này)</div>
+                            ) : c.deleted_by_role === "self" ? (
+                              <p className="text-slate-400 italic pl-8">💨 Tin nhắn đã được chính chủ thu hồi.</p>
+                            ) : (
+                              <>
+                                <p className="text-slate-700 pl-8">{c.body}</p>
+                                <div className="pl-8 flex items-center gap-1 flex-wrap">
+                                  {EMOJI_LIST.map((em) => {
+                                    const cnt = Number(c.reactions?.[em] || 0);
+                                    return <button key={em} type="button" onClick={() => handleReaction("comment", c.id, em, post.id)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border cursor-pointer ${cnt > 0 ? "bg-teal-50 border-teal-200 text-[#0F766E]" : "bg-slate-50 border-slate-200 text-slate-400"}`}>{em} {cnt > 0 && cnt}</button>;
+                                  })}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {activeReply && (
+                      <div className="flex items-center justify-between bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl text-[11px] font-bold text-[#0F766E]">
+                        <span>↩️ Đang trả lời @{activeReply}</span>
+                        <button type="button" onClick={() => setReplyingToMap((p) => ({ ...p, [post.id]: "" }))}><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                    )}
+                    <form onSubmit={async (e) => {
+                      e.preventDefault(); const fd = new FormData(e.currentTarget); const txt = (commentInputMap[post.id] || "").trim(); if (!txt) return;
+                      const newCmt = { id: "temp_" + Date.now(), post_id: post.id, author_name: currentUser.displayName || String(fd.get("author_name") || "Học sinh"), author_email: currentUser.email, author_avatar: currentUser.avatarUrl, author_badge: currentUser.roleBadge, reply_to_name: activeReply || null, body: txt, reactions: {} };
+                      setLocalCommentsMap((p) => ({ ...p, [post.id]: [...(p[post.id] || []), newCmt] }));
+                      emitInstantSync({ type: "comment_create", comment: newCmt });
+                      setCommentInputMap((p) => ({ ...p, [post.id]: "" })); setReplyingToMap((p) => ({ ...p, [post.id]: "" })); scrollToBottom(post.id); await onCreateComment(fd); router.refresh();
+                    }} className="flex flex-col sm:flex-row gap-2 pt-1">
+                      <input type="hidden" name="post_id" value={post.id} />
+                      <input type="hidden" name="reply_to_name" value={activeReply} />
+                      {!currentUser.email && <input name="author_name" required placeholder="Tên bạn *" className="sm:w-36 p-2.5 bg-white border border-slate-200 rounded-xl font-semibold" />}
+                      <input ref={(el) => { commentInputRefs.current[post.id] = el; }} name="body" required value={commentInputMap[post.id] || ""} onChange={(e) => setCommentInputMap((p) => ({ ...p, [post.id]: e.target.value }))} placeholder={activeReply ? `Nhắn trả lời @${activeReply}...` : "Viết câu trả lời..."} className="flex-1 p-2.5 bg-white border border-slate-200 rounded-xl" />
+                      <button type="submit" className="px-4 py-2.5 bg-slate-900 text-white font-bold rounded-xl inline-flex items-center justify-center gap-1.5 cursor-pointer shrink-0"><Send className="w-3.5 h-3.5" /> Gửi</button>
+                    </form>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
