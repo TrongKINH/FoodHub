@@ -1,4 +1,4 @@
-import Link from "next/navigation";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import {
@@ -23,9 +23,20 @@ import {
   type EnrichedProfileMap,
 } from "./InteractiveClient";
 import { TopFoodiesBoard } from "./TopFoodiesBoard";
-import { WishlistAndLevelClient, getAutoLevelRole } from "./WishlistAndLevelClient";
+import { WishlistAndLevelClient } from "./WishlistAndLevelClient";
 
 export const dynamic = "force-dynamic";
+
+// Hàm tính Role tự động đặt trực tiếp trên Server để không bị lỗi "use client"
+function getServerAutoLevelRole(score: number) {
+  if (score >= 30) {
+    return { id: "auto_lv3", name: "⚡ Chiến Thần Ẩm Thực", bg_color: "#FEF3C7", text_color: "#92400E" };
+  }
+  if (score >= 15) {
+    return { id: "auto_lv2", name: "🍱 Sành Ăn Học Đường", bg_color: "#CCFBF1", text_color: "#115E59" };
+  }
+  return { id: "auto_lv1", name: "🌱 Tân Binh Căn Tin", bg_color: "#E0E7FF", text_color: "#3730A3" };
+}
 
 export default async function SchoolHomePage({
   params,
@@ -165,19 +176,31 @@ export default async function SchoolHomePage({
   });
 
   const userScoreMap: Record<string, number> = {};
-  (allReviews ?? []).forEach((r: any) => { if (r.reviewer_email) userScoreMap[r.reviewer_email] = (userScoreMap[r.reviewer_email] || 0) + 3; });
-  (forumPosts ?? []).forEach((p: any) => { if (p.author_email) userScoreMap[p.author_email] = (userScoreMap[p.author_email] || 0) + 2; });
-  (forumComments ?? []).forEach((c: any) => { if (c.author_email && !c.deleted_by_role) userScoreMap[c.author_email] = (userScoreMap[c.author_email] || 0) + 1; });
-  (dishWishes ?? []).forEach((w: any) => { if (w.creator_email) userScoreMap[w.creator_email] = (userScoreMap[w.creator_email] || 0) + 2; });
+  (allReviews ?? []).forEach((r: any) => {
+    const em = r.reviewer_email?.toLowerCase().trim();
+    if (em) userScoreMap[em] = (userScoreMap[em] || 0) + 3;
+  });
+  (forumPosts ?? []).forEach((p: any) => {
+    const em = p.author_email?.toLowerCase().trim();
+    if (em) userScoreMap[em] = (userScoreMap[em] || 0) + 2;
+  });
+  (forumComments ?? []).forEach((c: any) => {
+    const em = c.author_email?.toLowerCase().trim();
+    if (em && !c.deleted_by_role) userScoreMap[em] = (userScoreMap[em] || 0) + 1;
+  });
+  (dishWishes ?? []).forEach((w: any) => {
+    const em = w.creator_email?.toLowerCase().trim();
+    if (em) userScoreMap[em] = (userScoreMap[em] || 0) + 2;
+  });
 
   Object.entries(userScoreMap).forEach(([em, sc]) => {
     if (sc >= 3) {
-      const autoBadge = getAutoLevelRole(sc);
+      const autoBadge = getServerAutoLevelRole(sc);
       if (!profileMap[em]) profileMap[em] = { roles: [] };
       profileMap[em].roles = [autoBadge, ...(profileMap[em].roles || [])];
     }
   });
-  const myCurrentScore = auth.email ? userScoreMap[auth.email] || 0 : 0;
+  const myCurrentScore = auth.email ? userScoreMap[auth.email.toLowerCase().trim()] || 0 : 0;
 
   const currentUserInfo = {
     email: auth.email,
