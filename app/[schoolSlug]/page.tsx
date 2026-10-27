@@ -520,48 +520,17 @@ export default async function SchoolHomePage({
       <main className="max-w-5xl mx-auto px-4 pt-6 space-y-8">
         <RandomDishWheelClient dishes={allSchoolDishes ?? []} />
         <section className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 space-y-5 shadow-2xs">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="inline-flex p-1 rounded-2xl bg-slate-100">
-              <Link href={`/${school.slug}?meal=breakfast`} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${activeMeal === "breakfast" ? "bg-white text-[#0F766E] shadow-2xs" : "text-slate-600 hover:text-slate-900"}`}>
-                🌅 Điểm tâm sáng
-              </Link>
-              <Link href={`/${school.slug}?meal=lunch`} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${activeMeal === "lunch" ? "bg-white text-[#0F766E] shadow-2xs" : "text-slate-600 hover:text-slate-900"}`}>
-                🍱 Đồ ăn trưa
-              </Link>
-            </div>
-
-            <div className="flex items-center flex-wrap gap-1.5 text-xs">
-              <span className="text-slate-500 font-medium mr-1">Không ăn / Dị ứng:</span>
-              {filterTags.map((tag) => {
-                const isExcluded = exclude === tag;
-                const nextUrl = isExcluded ? `/${school.slug}?meal=${activeMeal}` : `/${school.slug}?meal=${activeMeal}&exclude=${encodeURIComponent(tag)}`;
-                return (
-                  <Link key={tag} href={nextUrl} className={`px-2.5 py-1 rounded-full font-semibold border transition ${isExcluded ? "bg-red-50 text-red-700 border-red-200" : "bg-slate-50 text-slate-600 border-slate-200 hover:border-slate-300"}`}>
-                    {isExcluded ? `🚫 Đã ẩn ${tag}` : tag}
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-
-          {(dishes ?? []).length === 0 ? (
-            <div className="text-center py-12 space-y-2">
-              <Utensils className="w-8 h-8 text-slate-300 mx-auto" />
-              <p className="text-sm font-bold text-slate-700">Chưa có món ăn nào trong mục này</p>
-            </div>
-          ) : (
-            <CompactDishGrid
-              dishes={dishes ?? []}
-              reviewsByDish={reviewsByDish}
-              currentUser={currentUserInfo}
-              profileMap={profileMap}
-              allCustomRoles={allCustomRoles ?? []}
-              onAssignRole={assignUserRoleQuickAction}
-              onRevokeRole={revokeUserRoleQuickAction}
-              onUpsertReview={upsertReviewAction}
-              onDeleteReview={deleteReviewAction}
-            />
-          )}
+          <CompactDishGrid
+            dishes={allSchoolDishes ?? []}
+            reviewsByDish={reviewsByDish}
+            currentUser={currentUserInfo}
+            profileMap={profileMap}
+            allCustomRoles={allCustomRoles ?? []}
+            onAssignRole={assignUserRoleQuickAction}
+            onRevokeRole={revokeUserRoleQuickAction}
+            onUpsertReview={upsertReviewAction}
+            onDeleteReview={deleteReviewAction}
+          />
         </section>
 
         <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-2xs">

@@ -189,7 +189,12 @@ export function CompactDishGrid({
   const router = useRouter();
   const [localDishes, setLocalDishes] = useState<any[]>(dishes);
   const [localReviewsMap, setLocalReviewsMap] = useState<Record<string, any[]>>(reviewsByDish);
+
+  // Lọc Sáng/Trưa & Dị ứng trực tiếp trên trình duyệt (0ms delay, không cần chờ Server)
+  const [activeMeal, setActiveMeal] = useState<"breakfast" | "lunch">("lunch");
+  const [excludedTags, setExcludedTags] = useState<string[]>([]);
   const [dishSearchQuery, setDishSearchQuery] = useState<string>("");
+
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   const [reviewerKey, setReviewerKey] = useState<string>("");
   const [rating, setRating] = useState<number>(5);
@@ -206,11 +211,21 @@ export function CompactDishGrid({
     setReviewerName(currentUser.displayName || localStorage.getItem("foodhub_student_name") || "");
   }, [currentUser.email, currentUser.displayName]);
 
-  const selectedDish = localDishes.find((d) => d.id === selectedDishId) || null;
+  const filterTags = ["#nước", "#tôm", "#bò", "#heo", "#gà", "#hải-sản", "#trứng", "#chay"];
 
-  // Lọc món ăn tức thì ngay khi gõ từng chữ cái
+  const toggleExcludeTag = (tag: string) => {
+    setExcludedTags((prev) => prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]);
+  };
+
+  const selectedDish = localDishes.find((d) => d.id === selectedDishId) || null;
   const normalizedDishQuery = normText(dishSearchQuery);
+
   const visibleDishes = localDishes.filter((d) => {
+    if (d.meal_time !== activeMeal && d.meal_time !== "all_day") return false;
+    if (excludedTags.length > 0) {
+      const dTags: string[] = Array.isArray(d.ingredient_tags) ? d.ingredient_tags : [];
+      if (excludedTags.some((ex) => dTags.includes(ex))) return false;
+    }
     if (!normalizedDishQuery) return true;
     return (
       normText(d.name).includes(normalizedDishQuery) ||
@@ -286,6 +301,60 @@ export function CompactDishGrid({
 
   return (
     <div className="space-y-4">
+      {/* THANH CHỌN BUỔI SÁNG/TRƯA & NÚT DỊ ỨNG TỨC THÌ (0MS DELAY) */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex p-1 rounded-2xl bg-slate-100">
+          <button
+            type="button"
+            onClick={() => setActiveMeal("breakfast")}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+              activeMeal === "breakfast" ? "bg-white text-[#0F766E] shadow-2xs" : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            🌅 Điểm tâm sáng
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveMeal("lunch")}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+              activeMeal === "lunch" ? "bg-white text-[#0F766E] shadow-2xs" : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            🍱 Đồ ăn trưa
+          </button>
+        </div>
+
+        <div className="flex items-center flex-wrap gap-1.5 text-xs">
+          <span className="text-slate-500 font-medium mr-1">Không ăn / Dị ứng:</span>
+          {filterTags.map((tag) => {
+            const isExcluded = excludedTags.includes(tag);
+            return (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => toggleExcludeTag(tag)}
+                className={`px-2.5 py-1 rounded-full font-semibold border transition cursor-pointer active:scale-95 ${
+                  isExcluded
+                    ? "bg-red-50 text-red-700 border-red-200 shadow-2xs"
+                    : "bg-slate-50 text-slate-600 border-slate-200 hover:border-slate-300"
+                }`}
+              >
+                {isExcluded ? `🚫 Đã ẩn ${tag}` : tag}
+              </button>
+            );
+          })}
+          {excludedTags.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setExcludedTags([])}
+              className="text-[11px] font-bold text-[#0F766E] underline ml-1 cursor-pointer"
+            >
+              Hiện lại tất cả
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Ô TÌM KIẾM MÓN ĂN GÕ TỪNG CHỮ */}
       <div className="relative">
         <Search className="w-4 h-4 text-[#0F766E] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -309,7 +378,7 @@ export function CompactDishGrid({
 
       {visibleDishes.length === 0 ? (
         <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs text-slate-500">
-          Không tìm thấy món ăn nào khớp với <strong>&ldquo;{dishSearchQuery}&rdquo;</strong>.
+          Không có món ăn nào trong mục này khớp với bộ lọc hiện tại.
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 items-start">
