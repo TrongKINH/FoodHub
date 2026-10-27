@@ -1,3 +1,4 @@
+import { RandomDishWheelClient } from "./RandomDishWheelClient";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
@@ -517,6 +518,7 @@ export default async function SchoolHomePage({
       </header>
 
       <main className="max-w-5xl mx-auto px-4 pt-6 space-y-8">
+        <RandomDishWheelClient dishes={allSchoolDishes ?? []} />
         <section className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 space-y-5 shadow-2xs">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="inline-flex p-1 rounded-2xl bg-slate-100">
